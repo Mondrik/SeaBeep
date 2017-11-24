@@ -6,15 +6,12 @@ Created on Tue Oct  3 23:06:38 2017
 """
 
 import numpy as np
-import astropy.io.fits as pft
 import photutils as pt
-import glob
 import matplotlib.pyplot as plt
-from scipy.optimize import minimize
-import george
-from scipy.stats import mode
 import matplotlib.patches as patch
+import os
     
+#search via a convolution for center
 def findCenter(data,guess,size=5,search_size=50):
     lower = guess[0]-search_size
     bri = -99
@@ -29,61 +26,97 @@ def findCenter(data,guess,size=5,search_size=50):
             left += 1
         lower += 1
     return rowcent,colcent
-    
-def do_aperture_photometry(locs,data,rad=15,sky_rad_in=45,sky_rad_out=65):
+
+def getNewLocs(data,info_dict,params):
+    if params['can_move']:
+        if not params['ronchi']:
+            #We allow all spots to move, but must move as a fixed grid -- therefore
+            #only move by the median displacement vector from current positions
+            new_locs = []
+            for i,pair in enumerate(info_dict['dot_locs']):
+                myrow,mycol = findCenter(data,pair,search_size=params['search_rad'])
+                new_locs.append([myrow,mycol])  
+            new_locs = np.array(new_locs)
+            vec = new_locs - info_dict['dot_locs']
+            vec = np.rint(np.median(vec,axis=0))
+            new_locs = info_dict['dot_locs'] + vec
+        else:
+            new_locs = info_dict['dot_locs']
+            myrow,mycol = findCenter(data,new_locs[0],search_size=params['search_rad'])
+            new_locs[0] = [myrow,mycol]
+            new_locs[1] = new_locs[0]
+            #guesstimate of ronchi wavelength solution -- doesn't need to be 
+            #perfect, just good enough
+            new_locs[1][1] += np.float(info_dict['wavelengths'][-1])*0.53 - 17.61538
+    else:
+        if not params['ronchi']:
+            new_locs = info_dict['dot_locs']
+        else:
+            new_locs = info_dict['dot_locs']
+            new_locs[1] = new_locs[0]
+            new_locs[1][1] += np.float(info_dict['wavelengths'][-1])*0.53 - 17.61538
+    return new_locs
+
+def getBackground(data,fitsfilename,method='2d',box_size=50,params=None,locs=None):
+    if method == '2d':
+        bkg_estimator = pt.MedianBackground()
+        data_mask = (data<1.1*np.median(data))
+        bkg_maskarr = np.ma.array(data,mask=~data_mask)
+        bkg = pt.Background2D(bkg_maskarr, (box_size,box_size), filter_size=(3,3), sigma_clip=None,
+                              bkg_estimator=bkg_estimator)
+        bkg_median = bkg.background_median
+        plt.imshow(bkg.background,origin='lower',vmin=bkg_median-100,
+                   vmax=bkg_median+100,cmap='Greys')
+        plt.colorbar(orientation='horizontal')
+        if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'background')):
+            os.makedirs(os.path.join(os.path.dirname(fitsfilename),'background'))
+        savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename),'background'),
+                                'bkg_'+os.path.split(fitsfilename[:-5])[-1]+'.png')
+        plt.savefig(savepath)
+        plt.clf()
+        plt.close()
+    #aperture background method not currently working, don't use!!!!!
+    elif method == 'aperture':
+        bkg_arr = data.copy()
+        bkg = []
+        for loc in locs:
+            bkg_arr[loc[0]-params['sky_rad_in']:loc[0]+params['sky_rad_in'],
+                    loc[1]-params['sky_rad_in']:loc[1]+params['sky_rad_in']] = np.nan
+            bkg.append(np.nanmedian(bkg_arr[loc[0]-params['sky_rad_out']:loc[0]+params['sky_rad_out'],
+                                            loc[1]-params['sky_rad_out']:loc[1]+params['sky_rad_out']].flatten()))
+
+        plt.imshow(bkg_arr,origin='lower',vmin=np.nanmedian(bkg_arr)-100,vmax=np.nanmedian(bkg_arr)+100)
+        plt.colorbar()
+        for loc in locs:
+            plt.gca().add_patch(patch.Rectangle((loc[1]-params['sky_rad_out'],loc[0]-params['sky_rad_out']),
+                                2*params['sky_rad_out'],2*params['sky_rad_out'],color='k',alpha=0.5))
+        if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'background')):
+            os.makedirs(os.path.join(os.path.dirname(fitsfilename),'background'))
+        savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename),'background'),
+                                'bkg_'+os.path.split(fitsfilename[:-5])[-1]+'.png')
+        plt.savefig(savepath)
+        plt.clf()
+        plt.close()
+        bkg = np.array(bkg)
+    else:
+        raise ValueError('Method %s not supported.' % method)
+        
+    return bkg
+        
+def doAperturePhotometry(locs,data,fitsfilename,params,bkg_method='2d'):
     error = np.sqrt(data)
-    
     aplocs = []
     for i,pair in enumerate(locs):
         aplocs.append(pair[::-1])
 
-    apertures = pt.CircularAperture(aplocs,r=rad)
-    
-    bkg_arr = data.copy()
-    bkg = []
-    for loc in locs:
-        bkg_arr[loc[0]-sky_rad_in:loc[0]+sky_rad_in,loc[1]-sky_rad_in:loc[1]+sky_rad_in] = np.nan
-#        bkg.append(mode(bkg_arr[loc[0]-sky_rad_out:loc[0]+sky_rad_out,loc[1]-sky_rad_out:loc[1]+sky_rad_out],
-#                        nan_policy='omit',axis=None)[0][0])
-        bkg.append(np.nanmedian(bkg_arr[loc[0]-sky_rad_out:loc[0]+sky_rad_out,loc[1]-sky_rad_out:loc[1]+sky_rad_out].flatten()))
-#    plt.imshow(bkg_arr,origin='lower',vmax=3000)
-#    plt.colorbar()
-    #for loc in locs:
-    #    plt.gca().add_patch(patch.Rectangle((loc[1]-sky_rad_out,loc[0]-sky_rad_out),2*sky_rad_out,2*sky_rad_out,color='k',alpha=0.5))
-#    plt.show()
-    bkg = np.array(bkg)
-    
-    usemean = False
-    if usemean:
-        bkg_annulus = pt.CircularAnnulus(aplocs,r_in=sky_rad_in,r_out=sky_rad_out)
-        apers = [apertures,bkg_annulus]
-    else:
-        apers = apertures
-    
-    phot_table = pt.aperture_photometry(data,apers,method='subpixel',subpixels=10,error=error)
-    if usemean:
-        bkg_mean = phot_table['aperture_sum_1'] / bkg_annulus.area()
-        bkg_sum = bkg_mean * apertures.area()
-    else:
-        bkg_sum = bkg * apertures.area()
-#    print('backgrounds:', bkg,np.array(bkg_mean))
-
-    if usemean:
-        final_sum = phot_table['aperture_sum_0'] - bkg_sum
-    else:
-        final_sum = phot_table['aperture_sum'] - bkg_sum
-    phot_table['residual_aperture_sum'] = final_sum
-#    print(phot_table['residual_aperture_sum'])
-#    print(phot_table.keys())
-    #area_ratio = bkg_annulus.area()/apertures.area()
-    area_ratio = (sky_rad_out**2.-sky_rad_in**2.)/apertures.area()
-    if usemean:
-        error_final = np.sqrt(phot_table['aperture_sum_err_0']**2.+area_ratio*np.sqrt(bkg)**2.)
-    else:
-        error_final = phot_table['aperture_sum_err']
+    apertures = pt.CircularAperture(aplocs,r=params['ap_phot_rad'])
+    bkg = getBackground(data,fitsfilename,method=bkg_method,locs=locs,params=params)
+    phot_table = pt.aperture_photometry(data-bkg.background,apertures,method='subpixel',subpixels=10,error=error)
+    phot_table['residual_aperture_sum'] = phot_table['aperture_sum']
+    error_final = phot_table['aperture_sum_err']
     return phot_table,bkg,error_final
 
-def make_aux_plots(wavelength,combine,info_dict):
+def makeAuxPlots(wavelength,combine,info_dict):
     plt.figure()
     plt.title('FLUX')
     plt.plot(wavelength,combine/np.max(combine),'-ko',label='Keith')
@@ -126,40 +159,37 @@ def make_aux_plots(wavelength,combine,info_dict):
     plt.xlabel('wavelength')
     plt.ylabel('Rel. Value')
     plt.show()
-    
-def get_GP_model(info_dict):
-    xobs = np.empty(0)
-    yobs = np.empty(0)
-    eobs = np.empty(0)
-    
-    for i in range(len(info_dict['dot_locs'][:-1])):
-        xobs = np.concatenate((xobs,info_dict['wavelengths']))
-        yobs = np.concatenate((yobs,info_dict['dot%d'%i]['rel_tpt']))
-        eobs = np.concatenate((eobs,info_dict['dot%d'%i]['reltpt_uncert']))
-        
-    xobs = xobs[1:]
-    yobs = yobs[1:]/np.max(yobs[1:])
-    eobs = eobs[1:]
-    
-    np.savetxt('test.dat',np.column_stack((xobs,yobs,eobs)))
 
-    k = 1.0 * george.kernels.ExpSquaredKernel(1.0)
-    gp = george.GP(k)
-    gp.compute(xobs,yerr=eobs)
+def makeDiagnosticPlot(data,locs,params,fitsfilename,wavelength,savepath='./'):
+    plt.figure(figsize=(12,12))
+    plt.imshow(data,origin='lower',vmin=-200,vmax=500)
+    wedges = []
     
-    def neg_ln_like(p):
-        gp.set_parameter_vector(p)
-        return -gp.log_likelihood(yobs)
-    
-    def grad_neg_ln_like(p):
-        gp.set_parameter_vector(p)
-        return -gp.grad_log_likelihood(yobs)
-    
-    result = minimize(neg_ln_like, gp.get_parameter_vector(), jac=grad_neg_ln_like)
-    print(result)
-    gp.set_parameter_vector(result.x)
-    
-    xplot = np.linspace(525,725,300)
-    yplot,yerr = gp.predict(yobs,xplot,return_var=True,return_cov=False)
-    plt.fill_between(xplot,yplot+2.*yerr,yplot-2.*yerr,color='k',alpha=0.2)
-    plt.show()
+    for j,loc in enumerate(locs):
+        wedge = patch.Wedge(center=loc[::-1],theta1=0,theta2=360.,
+                                r=params['sky_rad_out'],width=params['sky_rad_out']-params['sky_rad_in'],
+                                color='r',alpha=0.5)
+        wedges.append(wedge)
+        plt.text(loc[1]+params['sky_rad_out']+10,loc[0]-params['sky_rad_out']-10,'%d' % j,
+                 color='w',size=16)
+    for wedge in wedges:
+        plt.gca().add_patch(wedge)
+
+    circs = []
+    for loc in locs:
+        circ = patch.Circle(xy=loc[::-1],
+                                radius=params['ap_phot_rad'],color='k',alpha=0.5)
+        circs.append(circ)
+    for circ in circs:
+        plt.gca().add_patch(circ)
+
+    plt.colorbar(orientation='horizontal')
+    plt.title(os.path.split(fitsfilename[:-5])[-1])
+    plt.text(800,100,'%snm' % wavelength,color='w',size=16)
+    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'diagnostics')):
+        os.makedirs(os.path.join(os.path.dirname(fitsfilename),'diagnostics'))
+    savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename),'diagnostics'),
+                            os.path.split(fitsfilename[:-5])[-1]+'.png')
+    plt.savefig(savepath)
+    plt.clf()
+    plt.close()
