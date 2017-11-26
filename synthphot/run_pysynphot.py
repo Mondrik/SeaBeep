@@ -1,7 +1,29 @@
+#!/usr/bin/python
 
-# coding: utf-8
+# Copyright (C) 2017 Michael Coughlin
+#
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; either version 3 of the License, or (at your
+# option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
+# Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-# In[1]:
+"""Synthetic photometry script.
+
+This script uses collimated beam projector and atmospheric transmission
+files to perform synthetic photometry on CALSPEC stars.
+
+Comments should be e-mailed to michael.coughlin@ligo.org.
+
+"""
 
 import os
 os.environ['PYSYN_CDBS'] = os.path.abspath('../pysynphot_cdbs')
@@ -21,6 +43,51 @@ matplotlib.use('Agg')
 #matplotlib.rcParams.update({'font.size': 20})
 import matplotlib.pyplot as plt
 from matplotlib.pyplot import cm
+
+__author__ = "Michael Coughlin <michael.coughlin@ligo.org>"
+__version__ = 1.0
+__date__    = "9/22/2013"
+
+# =============================================================================
+#
+#                               DEFINITIONS
+#
+# =============================================================================
+
+def parse_commandline():
+    """@parse the options given on the command-line.
+    """
+    parser = optparse.OptionParser(usage=__doc__,version=__version__)
+
+    parser.add_option("-p", "--plotDir", help="Plot directory.",
+                      default ="../plots")
+    parser.add_option("-d", "--dataDir", help="Data directory.",
+                      default ="../data")
+    parser.add_option("-s", "--star", help="star.",
+                      default ="hd14943")
+    parser.add_option("-f", "--filter", help="filter.",
+                      default ="SLOAN-SDSS.g")
+    parser.add_option("-a", "--atmosphere", help="atmosphere.",
+                      default ="Tatmo_1")
+
+    parser.add_option("-v", "--verbose", action="store_true", default=False,
+                      help="Run verbosely. (Default: False)")
+
+    opts, args = parser.parse_args()
+
+    # show parameters
+    if opts.verbose:
+        print >> sys.stderr, ""
+        print >> sys.stderr, "running run_pysynphot..."
+        print >> sys.stderr, "version: %s"%__version__
+        print >> sys.stderr, ""
+        print >> sys.stderr, "***************** PARAMETERS ********************"
+        for o in opts.__dict__.items():
+          print >> sys.stderr, o[0]+":"
+          print >> sys.stderr, o[1]
+        print >> sys.stderr, ""
+
+    return opts
 
 bandpass_names = ["g","r","i"]
 bandpasses = []
