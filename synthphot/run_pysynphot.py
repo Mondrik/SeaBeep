@@ -25,7 +25,7 @@ Comments should be e-mailed to michael.coughlin@ligo.org.
 
 """
 
-import os
+import os, sys, optparse
 os.environ['PYSYN_CDBS'] = os.path.abspath('../pysynphot_cdbs')
 import cPickle as pickle
 import numpy as np
@@ -65,8 +65,8 @@ def parse_commandline():
                       default ="../data")
     parser.add_option("-s", "--star", help="star.",
                       default ="hd14943")
-    parser.add_option("-f", "--filter", help="filter.",
-                      default ="SLOAN-SDSS.g")
+    parser.add_option("-f", "--filters", help="filter.",
+                      default ="SLOAN-SDSS.g,SLOAN-SDSS.r,SLOAN-SDSS.i")
     parser.add_option("-a", "--atmosphere", help="atmosphere.",
                       default ="Tatmo_1")
 
@@ -89,12 +89,25 @@ def parse_commandline():
 
     return opts
 
-bandpass_names = ["g","r","i"]
+# Parse command line
+opts = parse_commandline()
+
+plotDir = opts.plotDir
+if not os.path.isdir(plotDir):
+    os.makedirs(plotDir)
+
+atmosfile = os.path.join(opts.dataDir,'atmosphere','%s.list'%opts.atmosphere)
+atmos = np.loadtxt(atmosfile,comments='@',skiprows=25)
+atmos[:,1] = atmos[:,1]/np.max(atmos[:,1])
+atmosband = S.ArrayBandpass((atmos[:,0] * u.angstrom).value, np.clip(atmos[:,1], 0, np.inf), name='atmos')
+
+bandpass_names = opts.filters.split(",")
 bandpasses = []
 for bandpass_name in bandpass_names:
-    filename = "input/SLOAN-SDSS.%s.dat"%bandpass_name
+    filename = "%s/instrument/%s.dat"%(opts.dataDir,bandpass_name)
     table = astropy.table.Table.read(filename, format='ascii', names=['wavelength', 'transmission'])
     band = S.ArrayBandpass((table['wavelength'] * u.angstrom).value, np.clip(table['transmission'], 0, np.inf), name=bandpass_name)
+    #bandpasses.append(band*atmosband)
     bandpasses.append(band)
 
 colors = sns.color_palette('spectral', len(bandpasses))
@@ -103,11 +116,12 @@ plt.figure(figsize=(10, 6))
 for bandpass_name, bandpass, color in zip(bandpass_names, bandpasses, colors):
     plt.fill_between(bandpass.wave, bandpass.throughput, color=color, label=bandpass_name)
 plt.legend(loc='upper left')
-plt.savefig('plots/throughput.pdf')
+plotName = "%s/throughput.pdf"%plotDir
+plt.savefig(plotName)
 plt.close()
 
-calspecfile = "hd14943_mod_001.fits"
-spec = S.FileSpectrum(os.path.join(os.environ['PYSYN_CDBS'], 'grid', 'calspec', calspecfile))
+calspecfile = os.path.join(os.environ['PYSYN_CDBS'], 'grid', 'calspec',"%s_mod_001.fits"%opts.star)
+spec = S.FileSpectrum(calspecfile)
 
 A = (4 * np.pi * (100*u.Mpc)**2).cgs.value
 wave = spec.wave
@@ -118,5 +132,5 @@ for bandpass in bandpasses:
     obs = S.Observation(spec, bandpass)
     ret = obs.effstim('abmag') - S.Observation(S.FlatSpectrum(0, fluxunits='abmag'), bandpass).effstim('abmag')
 
-    print ret
+    print bandpass, ret
 
