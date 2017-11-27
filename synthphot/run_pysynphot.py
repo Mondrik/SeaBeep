@@ -98,11 +98,13 @@ if not os.path.isdir(plotDir):
 
 atmosfile = os.path.join(opts.dataDir,'atmosphere','%s.list'%opts.atmosphere)
 atmos = np.loadtxt(atmosfile,comments='@',skiprows=25)
+atmos[:,0] = 10*atmos[:,0]
 atmos[:,1] = atmos[:,1]/np.max(atmos[:,1])
 atmosband = S.ArrayBandpass((atmos[:,0] * u.angstrom).value, np.clip(atmos[:,1], 0, np.inf), name='atmos')
 
 bandpass_names = opts.filters.split(",")
 bandpasses = []
+atmosbandpasses = []
 for bandpass_name in bandpass_names:
     filename = "%s/instrument/%s.dat"%(opts.dataDir,bandpass_name)
     table = astropy.table.Table.read(filename, format='ascii', names=['wavelength', 'transmission'])
@@ -110,12 +112,20 @@ for bandpass_name in bandpass_names:
     #bandpasses.append(band*atmosband)
     bandpasses.append(band)
 
-colors = sns.color_palette('spectral', len(bandpasses))
+    atmos_interp = np.interp(band.wave,atmos[:,0],atmos[:,1])
+
+    atmosbandpass = S.ArrayBandpass((band.wave * u.angstrom).value, np.clip(atmos_interp*band.throughput, 0, np.inf), name='atmos')
+    atmosbandpasses.append(atmosbandpass)
+
+colors = sns.color_palette('spectral', len(bandpasses)+1)
 
 plt.figure(figsize=(10, 6))
 for bandpass_name, bandpass, color in zip(bandpass_names, bandpasses, colors):
-    plt.fill_between(bandpass.wave, bandpass.throughput, color=color, label=bandpass_name)
-plt.legend(loc='upper left')
+    plt.plot(bandpass.wave, bandpass.throughput, '-', color=color, label=bandpass_name)
+plt.plot(atmosband.wave, atmosband.throughput, color=colors[-1], label='Atmosphere')
+for bandpass_name, bandpass, color in zip(bandpass_names, atmosbandpasses, colors):
+    plt.plot(bandpass.wave, bandpass.throughput, '--', color=color)
+plt.legend(loc='best')
 plotName = "%s/throughput.pdf"%plotDir
 plt.savefig(plotName)
 plt.close()
@@ -128,7 +138,7 @@ wave = spec.wave
 #flam = spec.flux / A
 #spec = S.ArraySpectrum(wave, flam, 'angstrom', 'flam')
 
-for bandpass in bandpasses:
+for bandpass in atmosbandpasses:
     obs = S.Observation(spec, bandpass)
     ret = obs.effstim('abmag') - S.Observation(S.FlatSpectrum(0, fluxunits='abmag'), bandpass).effstim('abmag')
 
