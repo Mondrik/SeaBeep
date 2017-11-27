@@ -25,7 +25,7 @@ Comments should be e-mailed to michael.coughlin@ligo.org.
 
 """
 
-import os, sys, optparse
+import os, sys, optparse, re
 os.environ['PYSYN_CDBS'] = os.path.abspath('../pysynphot_cdbs')
 import cPickle as pickle
 import numpy as np
@@ -66,7 +66,8 @@ def parse_commandline():
     parser.add_option("-s", "--star", help="star.",
                       default ="hd14943")
     parser.add_option("-f", "--filters", help="filter.",
-                      default ="SLOAN-SDSS.g,SLOAN-SDSS.r,SLOAN-SDSS.i")
+                      default = "r_filter_CBP")
+                      #default ="SLOAN-SDSS.g,SLOAN-SDSS.r,SLOAN-SDSS.i")
     parser.add_option("-a", "--atmosphere", help="atmosphere.",
                       default ="Tatmo_1")
 
@@ -89,6 +90,28 @@ def parse_commandline():
 
     return opts
 
+def readlist(cat):
+    objs, columns = [], []
+    dictvals = {}
+    fp = open( cat, "r")
+    lines = fp.readlines()
+    for line in lines :
+        if len(line.strip()) != 0 :
+            if (line[0]=='#'):
+                if (line[0:4] != "#end") :
+                    column = re.sub('#|:|\\n','', line)
+                    columns.append(column)
+                continue
+            if line[0] == "@" :
+                words = line[1:].split()
+                dictvals[words[0]] = words[1:]
+                continue
+            else :
+                objs.append(line.split())     
+    fp.close()
+    info  = np.array(objs, dtype=float)
+    return dictvals, info
+
 # Parse command line
 opts = parse_commandline()
 
@@ -97,7 +120,8 @@ if not os.path.isdir(plotDir):
     os.makedirs(plotDir)
 
 atmosfile = os.path.join(opts.dataDir,'atmosphere','%s.list'%opts.atmosphere)
-atmos = np.loadtxt(atmosfile,comments='@',skiprows=25)
+#atmos = np.loadtxt(atmosfile,comments='@',skiprows=25)
+dictvals, atmos = readlist(atmosfile)
 atmos[:,0] = 10*atmos[:,0]
 atmos[:,1] = atmos[:,1]/np.max(atmos[:,1])
 atmosband = S.ArrayBandpass((atmos[:,0] * u.angstrom).value, np.clip(atmos[:,1], 0, np.inf), name='atmos')
@@ -107,14 +131,18 @@ bandpasses = []
 atmosbandpasses = []
 for bandpass_name in bandpass_names:
     filename = "%s/instrument/%s.dat"%(opts.dataDir,bandpass_name)
-    table = astropy.table.Table.read(filename, format='ascii', names=['wavelength', 'transmission'])
-    band = S.ArrayBandpass((table['wavelength'] * u.angstrom).value, np.clip(table['transmission'], 0, np.inf), name=bandpass_name)
+    if "SDSS" in filename:
+        table = astropy.table.Table.read(filename, format='ascii', names=['wavelength', 'transmission'])
+        band = S.ArrayBandpass((table['wavelength'] * u.angstrom).value, np.clip(table['transmission'], 0, np.inf), name=bandpass_name)
+    else:
+        table = astropy.table.Table.read(filename, format='ascii', names=['wavelength', 'transmission', 'charge'])
+        band = S.ArrayBandpass((10 * table['wavelength'] * u.angstrom).value, np.clip(table['transmission'], 0, np.inf), name=bandpass_name)
     #bandpasses.append(band*atmosband)
     bandpasses.append(band)
 
     atmos_interp = np.interp(band.wave,atmos[:,0],atmos[:,1])
 
-    atmosbandpass = S.ArrayBandpass((band.wave * u.angstrom).value, np.clip(atmos_interp*band.throughput, 0, np.inf), name='atmos')
+    atmosbandpass = S.ArrayBandpass((band.wave * u.angstrom).value, np.clip(atmos_interp*band.throughput, 0, np.inf), name=bandpass_name)
     atmosbandpasses.append(atmosbandpass)
 
 colors = sns.color_palette('spectral', len(bandpasses)+1)
