@@ -131,9 +131,12 @@ bandpasses = []
 atmosbandpasses = []
 for bandpass_name in bandpass_names:
     filename = "%s/instrument/%s.dat"%(opts.dataDir,bandpass_name)
-    if ("SDSS" in filename) or ("I" in filename):
+    if "SDSS" in filename:
         table = astropy.table.Table.read(filename, format='ascii', names=['wavelength', 'transmission'])
         band = S.ArrayBandpass((table['wavelength'] * u.angstrom).value, np.clip(table['transmission'], 0, np.inf), name=bandpass_name)
+    elif "I" in filename:
+        table = astropy.table.Table.read(filename, format='ascii', names=['wavelength', 'transmission'])
+        band = S.ArrayBandpass((10 * table['wavelength'] * u.angstrom).value, np.clip(table['transmission'], 0, np.inf), name=bandpass_name)
     else:
         table = astropy.table.Table.read(filename, format='ascii', names=['wavelength', 'transmission', 'charge'])
         band = S.ArrayBandpass((10 * table['wavelength'] * u.angstrom).value, np.clip(table['transmission'], 0, np.inf), name=bandpass_name)
