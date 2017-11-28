@@ -26,6 +26,13 @@ Comments should be e-mailed to michael.coughlin@ligo.org.
 """
 
 import os, sys, optparse, re
+
+if not os.getenv("DISPLAY", None):
+    import matplotlib
+    matplotlib.use("agg", warn=False)
+    import matplotlib.pyplot as plt
+    from matplotlib.pyplot import cm
+
 os.environ['PYSYN_CDBS'] = os.path.abspath('../pysynphot_cdbs')
 import cPickle as pickle
 import numpy as np
@@ -36,13 +43,6 @@ from astropy.utils.console import ProgressBar
 from astropy.utils.data import download_file
 import functools
 import seaborn.apionly as sns 
-
-import matplotlib
-#matplotlib.rc('text', usetex=True)
-matplotlib.use('Agg')
-#matplotlib.rcParams.update({'font.size': 20})
-import matplotlib.pyplot as plt
-from matplotlib.pyplot import cm
 
 __author__ = "Michael Coughlin <michael.coughlin@ligo.org>"
 __version__ = 1.0
@@ -66,7 +66,7 @@ def parse_commandline():
     parser.add_option("-s", "--star", help="star.",
                       default ="hd14943")
     parser.add_option("-f", "--filters", help="filter.",
-                      default = "r_filter_CBP")
+                      default = "r_filter_CBP,I_filter_CBP")
                       #default ="SLOAN-SDSS.g,SLOAN-SDSS.r,SLOAN-SDSS.i")
     parser.add_option("-a", "--atmosphere", help="atmosphere.",
                       default ="Tatmo_1")
@@ -131,7 +131,7 @@ bandpasses = []
 atmosbandpasses = []
 for bandpass_name in bandpass_names:
     filename = "%s/instrument/%s.dat"%(opts.dataDir,bandpass_name)
-    if "SDSS" in filename:
+    if ("SDSS" in filename) or ("I" in filename):
         table = astropy.table.Table.read(filename, format='ascii', names=['wavelength', 'transmission'])
         band = S.ArrayBandpass((table['wavelength'] * u.angstrom).value, np.clip(table['transmission'], 0, np.inf), name=bandpass_name)
     else:
