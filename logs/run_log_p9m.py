@@ -39,7 +39,9 @@ def lin_func(p, x):
 
 # Parse command line
 opts = parse_commandline()
+foldername = opts.logfile.split("/")[-2]  
 name = opts.logfile.split("/")[-1].replace(".xml","")
+name = "%s_%s"%(foldername,name)
 
 plotDir = 'output/%s'%(name)
 if not os.path.isdir(plotDir):

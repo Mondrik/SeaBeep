@@ -1,5 +1,5 @@
 
-import os, sys, glob
+import os, sys, glob, fnmatch
 import optparse
 import numpy as np
 
@@ -14,22 +14,31 @@ def parse_commandline():
     """
     parser = optparse.OptionParser()
 
-    parser.add_option("--logDir",default="/data/nas/CTIO_0p9m/october2017/logs_20171002")
+    parser.add_option("--logDir",default="/data/nas/CTIO_0p9m/temp_oct17_data")
     parser.add_option("--doPlots",  action="store_true", default=False)
 
     opts, args = parser.parse_args()
  
     return opts
- 
+
+def find_files(directory, pattern):
+    for root, dirs, files in os.walk(directory):
+        for basename in files:
+            if fnmatch.fnmatch(basename, pattern):
+                filename = os.path.join(root, basename)
+                yield filename
+
 # Parse command line
 opts = parse_commandline()
-name = opts.logDir.split("/")[-1]
-xmlfiles = glob.glob(os.path.join(opts.logDir,'*.xml'))
+filename = os.path.join("output","combine.dat")
 
-filename = os.path.join("output","combine_%s.dat"%name)
 fid = open(filename,'w')
+xmlfiles = find_files(opts.logDir, '*.xml')
 for xmlfile in xmlfiles:
+    foldername = xmlfile.split("/")[-2]
     name = xmlfile.split("/")[-1].replace(".xml","")
+    if name == "": continue
+    name = "%s_%s"%(foldername,name)
     #if True:
     if not os.path.isfile("output/%s/photons.dat"%(name)):
         if opts.doPlots:
@@ -42,6 +51,6 @@ for xmlfile in xmlfiles:
             os.system(system_command)
 
     data_out = np.loadtxt("output/%s/photons.dat"%(name)) 
-    fid.write('%s %.5e %.5e\n'%(name,data_out[0],data_out[1]))
+    fid.write('%s %.5e %.5e\n'%(xmlfile,data_out[0],data_out[1]))
 fid.close()
 
