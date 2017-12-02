@@ -70,6 +70,8 @@ def parse_commandline():
                       #default ="SLOAN-SDSS.g,SLOAN-SDSS.r,SLOAN-SDSS.i")
     parser.add_option("-a", "--atmosphere", help="atmosphere.",
                       default ="Tatmo_1")
+    parser.add_option("-y", "--photometry", help="photometry.",
+                      default ="catalog")
 
     parser.add_option("-v", "--verbose", action="store_true", default=False,
                       help="Run verbosely. (Default: False)")
@@ -168,6 +170,21 @@ A = (4 * np.pi * (100*u.Mpc)**2).cgs.value
 wave = spec.wave
 #flam = spec.flux / A
 #spec = S.ArraySpectrum(wave, flam, 'angstrom', 'flam')
+
+photometryfile = os.path.join(opts.dataDir,'photometry','%s.list'%opts.photometry)
+photometrylines = [line.rstrip('\n') for line in open(photometryfile)]
+photometry = {}
+for line in photometrylines:
+    if line[0] == "#": continue
+    lineSplit = line.split(" ")
+    name, date, band = lineSplit[0], float(lineSplit[1]), lineSplit[3]
+    ra, dec = float(lineSplit[4]), float(lineSplit[5])
+    mag, dmag = float(lineSplit[7]), float(lineSplit[8])
+    if not name in photometry:
+        photometry[name] = {}
+    photometry[name][date] = [mag,dmag]
+    
+#photometry = np.loadtxt(photometryfile)
 
 for bandpass in atmosbandpasses:
     obs = S.Observation(spec, bandpass)
