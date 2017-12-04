@@ -6,18 +6,24 @@ import os
 import pickle
 import cbp_helpers as cbph
 
+def getStandardParams():
+    params = {}
+    params['ap_phot_rad'] = 45
+    params['sky_rad_in'] = params['ap_phot_rad'] + 5
+    params['sky_rad_out'] = params['sky_rad_in'] + 5
+    params['search_rad'] = 10
+    params['use_flat'] = False
+    params['ronchi'] = True
+    params['can_move'] = False
+    params['gain'] = 3.
+    params['use_overscan'] = False
+    return params
+
 def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=None,
-               make_plots=True):
+               make_plots=True,bkg_method='2d'):
     #important parameters -- If not given, make assumptions
     if params is None:
-        params = {}
-        params['ap_phot_rad'] = 45
-        params['sky_rad_in'] = params['ap_phot_rad'] + 5
-        params['sky_rad_out'] = params['sky_rad_in'] + 5
-        params['search_rad'] = 10
-        params['use_flat'] = False
-        params['ronchi'] = True
-        params['can_move'] = False
+        params = getStandardParams()
     
     #Inputs
     if fits_file_path is None:
@@ -39,7 +45,7 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
     
     charge_file = os.path.join(fits_file_path,root_name+'_charge.txt')
     assert(os.path.exists(charge_file)),'Charge file %s not found!' % charge_file
-    charge_data = np.loadtxt(charge_file,usecols=[2])
+    charge_data = np.atleast_1d(np.loadtxt(charge_file,usecols=[2]))
     
     spot_file = os.path.join(fits_file_path,root_name+'_spots.txt')
     assert(os.path.exists(spot_file)),'Spot file %s not found!' % spot_file
@@ -70,8 +76,6 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
         info_dict['dot%d' % i]['flux'] = []
         info_dict['dot%d' % i]['dot_loc'] = []
         info_dict['dot%d' % i]['aper_uncert'] = []
-        info_dict['dot%d' % i]['reltpt_uncert'] = []
-        info_dict['dot%d' % i]['raw_tpt'] = []
     info_dict['filename'] = []
     info_dict['wavelengths'] = []
     info_dict['exp_times'] = []
@@ -81,7 +85,8 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
     
     if params['use_flat']:
         flatd = pft.open(flat_name)
-        flat = flatd[0].data * 3. #for gain from fits header.
+        #cut off last 30 columns, as they are overscan
+        flat = flatd[0].data[:,:-30]
     
     for f in file_list[sort_idxs]:
         #====================================================
@@ -96,7 +101,15 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
         #we don't use the CBP off data
         if shutter_stat == 'closed':
             continue
-        data = d[0].data.copy() * 3. #3 for gain from fits header
+        #cut off last 30 columns, as they are overscan
+        overscan = np.median(d[0].data[:,-30:],axis=1) * params['gain']
+        data = d[0].data[:,:-30] * params['gain']
+        
+        # Do some pre-processing of the data
+        cbph.filterCosmics(data)
+        if params['use_overscan']:
+            overscan_array = np.repeat(overscan[:,np.newaxis],data.shape[0],axis=1)
+            data = data - overscan_array
         if params['use_flat']:
             data = data / flat
     
@@ -111,7 +124,7 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
             
         #=====================================================
         #Aperture photometry
-        phot_table, bkg, error = cbph.doAperturePhotometry(new_locs,data,f,params,bkg_method='2d')
+        phot_table, bkg, error = cbph.doAperturePhotometry(new_locs,data,f,params,bkg_method=bkg_method)
         #=====================================================
         
         #Update info dictionary with new photometry + locations
@@ -126,7 +139,7 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
         
         #====================================================
         #PLOTTING
-        cbph.makeDiagnosticPlot(data-np.median(data),new_locs,params,f,wavelength)
+        cbph.makeDiagnosticPlots(data,new_locs,params,f,wavelength,bkg)
         #====================================================
         
     #begin post-processing of photometry
@@ -153,16 +166,28 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
     wavelength = info_dict['wavelengths']
     for i in range(len(info_dict['dot_locs'])):
         x = info_dict['dot%d' % i]['flux'] / info_dict['charge']
-        info_dict['dot%d' % i]['raw_tpt'].append(x)
+        info_dict['dot%d' % i]['raw_tpt'] = np.asarray(x,dtype=np.float)
         info_dict['dot%d' % i]['rel_tpt'] = x/np.max(x[charge_mask])
         yerr = np.array(info_dict['dot%d'%i]['aper_uncert']) / info_dict['charge'] / np.max(x[charge_mask])
-        for err in yerr:
-            info_dict['dot%d' % i]['reltpt_uncert'].append(err)
+        info_dict['dot%d' % i]['reltpt_uncert'] = yerr
         info_dict['dot%d' % i]['reltpt_uncert'] = np.asarray(info_dict['dot%d' % i]['reltpt_uncert'])
         if make_plots:
             yerr = np.asarray(yerr)
             plt.errorbar(wavelength[charge_mask],x[charge_mask]/np.max(x[charge_mask]),yerr=yerr[charge_mask],marker='o',
                          label='%d'%i,ls='-',capsize=3,ms=3)
+    
+
+    with open(pkl_filename,'wb') as myfile:
+        pickle.dump(info_dict,myfile)
+        
+    #make median throughput array + file:
+    n = len(info_dict['dot_locs'])
+    tptarr = np.zeros((len(wavelength),n)).astype(np.float)
+    for i in range(len(info_dict['dot_locs'])):
+        tptarr[:,i] = np.array(info_dict['dot%d'%i]['raw_tpt']) / np.max(info_dict['dot%d'%i]['raw_tpt'][charge_mask])
+    tpts = np.median(tptarr,axis=1)
+    asc_file_name = os.path.join(fits_file_path,root_name+'_median_tpt.txt')
+    cbph.makeAsciiFile(wavelength,tpts,info_dict['charge'],fname=asc_file_name)
     
     if make_plots:
         plt.ylim(0,1.1)
@@ -172,8 +197,5 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
         plt.ylabel('Relative Throughput')
         plt.savefig(tpt_plot_name)
         plt.show()
-
-    with open(pkl_filename,'wb') as myfile:
-        pickle.dump(info_dict,myfile)
     
     return info_dict
