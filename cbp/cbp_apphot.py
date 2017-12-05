@@ -140,6 +140,7 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
         #====================================================
         #PLOTTING
         cbph.makeDiagnosticPlots(data,new_locs,params,f,wavelength,bkg)
+        cbph.makeDotHistograms(data,new_locs,20,f,wavelength,bkg)
         #====================================================
         
     #begin post-processing of photometry
