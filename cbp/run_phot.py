@@ -19,5 +19,5 @@ params['can_move'] = True
 params['gain'] = 3.
 params['use_overscan'] = True
       
-info_dict = cap.processCBP(fits_file_path='C:\\Users\\Nick\\Documents\\CTIO_CBP\\20171006_RONCHI400_clear',
+info_dict = cap.processCBP(fits_file_path='C:\\Users\\Nick\\Documents\\CTIO_CBP\\20171007_RONCHI400_OBF',
                params=params,bkg_method='2d',flat_name='whiteflat.fits')

@@ -248,7 +248,10 @@ def makeDotHistograms(data,locs,box_size,fitsfilename,wavelength,bkg,savepath='.
     plt.close()
     
     #need to fix by making into subplots
-#    plt.figure(figsize=(12,12))
+#    ncolplts = 3
+#    nrowplts = np.ceil(len(locs)/ncolplts)
+#    fig,ax = plt.subplots(nrowplts,ncolplts)
+#    fig.set_size_inches((16,8))
 #    for i,loc in enumerate(locs):
 #        region = bkgsub[loc[0]-box_size:loc[0]+box_size,loc[1]-box_size:loc[1]+box_size].flatten()
 #        plt.imshow(region,bins=20,range=[-200,60000],histtype='step',label='%d'%i)
@@ -256,15 +259,15 @@ def makeDotHistograms(data,locs,box_size,fitsfilename,wavelength,bkg,savepath='.
 #    plt.title('%snm' % wavelength)
 #    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'diagnostics')):
 #        os.makedirs(os.path.join(os.path.dirname(fitsfilename),'diagnostics'))
-#    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'diagnostics','local_histograms')):
-#        os.makedirs(os.path.join(os.path.dirname(fitsfilename),'diagnostics','local_histograms'))
-#    savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename),'diagnostics','local_histograms'),
+#    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'diagnostics','local_images')):
+#        os.makedirs(os.path.join(os.path.dirname(fitsfilename),'diagnostics','local_images'))
+#    savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename),'diagnostics','local_images'),
 #                            os.path.split(fitsfilename[:-5])[-1]+'.png')
 #    plt.ylim(0,20)
 #    plt.savefig(savepath)
 #    plt.clf()
 #    plt.close()
-    
+#    
 def filterCosmics(data):
     i  = 0
     count = 1000000
