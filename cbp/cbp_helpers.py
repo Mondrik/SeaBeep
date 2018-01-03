@@ -104,7 +104,7 @@ def getBackground(data,fitsfilename,bkg_method='2d',box_size=64,params=None,locs
         bkg = np.array(bkg)
         bkg = BkgWrapper(bkg)
     elif bkg_method == 'median':
-        return BkgWrapper(np.median(data))
+        return BkgWrapper(np.median(data.flatten()))
     elif bkg_method == 'None':
         return None
     else:
@@ -113,29 +113,38 @@ def getBackground(data,fitsfilename,bkg_method='2d',box_size=64,params=None,locs
     return bkg
         
 def doAperturePhotometry(locs,data,fitsfilename,params,bkg_method='2d'):
-    error = np.sqrt(data)
     aplocs = []
     for i,pair in enumerate(locs):
         aplocs.append(pair[::-1])
 
     apertures = pt.CircularAperture(aplocs,r=params['ap_phot_rad'])
+    uncert_table = pt.aperture_photometry(data,apertures,method='subpixel',subpixels=10)
     bkg = getBackground(data,fitsfilename,bkg_method=bkg_method,locs=locs,params=params)
     if bkg_method == '2d':
-        phot_table = pt.aperture_photometry(data,apertures,method='subpixel',subpixels=10,error=error)
+        phot_table = pt.aperture_photometry(data,apertures,method='subpixel',subpixels=10)
         bkg_table = pt.aperture_photometry(bkg.background,apertures,method='subpixel',subpixels=10)
         phot_table['residual_aperture_sum'] = phot_table['aperture_sum'] - bkg_table['aperture_sum']
     elif bkg_method == 'aperture':
-        phot_table = pt.aperture_photometry(data,apertures,method='subpixel',subpixels=10,error=error)
+        phot_table = pt.aperture_photometry(data,apertures,method='subpixel',subpixels=10)
         phot_table['residual_aperture_sum'] = phot_table['aperture_sum'] - bkg.background*apertures.area()
     elif bkg_method == 'median':
-        phot_table = pt.aperture_photometry(data,apertures,method='subpixel',subpixels=10,error=error)
+        phot_table = pt.aperture_photometry(data,apertures,method='subpixel',subpixels=10)
         phot_table['residual_aperture_sum'] = phot_table['aperture_sum'] - bkg.background*apertures.area()
     elif bkg_method == 'None':
-        phot_table = pt.aperture_photometry(data,apertures,method='subpixel',subpixels=10,error=error)
+        phot_table = pt.aperture_photometry(data,apertures,method='subpixel',subpixels=10)
         phot_table['residual_aperture_sum'] = phot_table['aperture_sum']
 
-    error_final = phot_table['aperture_sum_err']
-    return phot_table,bkg,error_final
+    uncert_final = np.sqrt(uncert_table['aperture_sum'])
+    return phot_table,bkg,uncert_final
+
+def getTptUncert(aper_uncert,charge_uncert,flux,charge,p=0.84):
+    #p=0.84 bc 1-sigma (assuming normality) corresponds to 68% of the integral of the population
+    #so (since tan is an odd fn) 1-sigma errorbars are analogous to calculating the 0 +/- 16/84 quantiles to
+    #contain 68% of the random values from the PDF.
+#    sigmax = aper_uncert
+#    sigmay = charge_uncert
+#    return sigmax/sigmay * np.tan(np.pi*(p-0.5)) #quantile function for Cauchy PDF
+    return np.sqrt((flux/charge)**2. * ((aper_uncert/flux)**2. + (charge_uncert/charge)**2.))
 
 def makeAuxPlots(wavelength,combine,info_dict):
     plt.figure()
@@ -247,26 +256,36 @@ def makeDotHistograms(data,locs,box_size,fitsfilename,wavelength,bkg,savepath='.
     plt.clf()
     plt.close()
     
-    #need to fix by making into subplots
-#    ncolplts = 3
-#    nrowplts = np.ceil(len(locs)/ncolplts)
-#    fig,ax = plt.subplots(nrowplts,ncolplts)
-#    fig.set_size_inches((16,8))
-#    for i,loc in enumerate(locs):
-#        region = bkgsub[loc[0]-box_size:loc[0]+box_size,loc[1]-box_size:loc[1]+box_size].flatten()
-#        plt.imshow(region,bins=20,range=[-200,60000],histtype='step',label='%d'%i)
-#    plt.legend(ncol=2)
-#    plt.title('%snm' % wavelength)
-#    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'diagnostics')):
-#        os.makedirs(os.path.join(os.path.dirname(fitsfilename),'diagnostics'))
-#    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'diagnostics','local_images')):
-#        os.makedirs(os.path.join(os.path.dirname(fitsfilename),'diagnostics','local_images'))
-#    savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename),'diagnostics','local_images'),
-#                            os.path.split(fitsfilename[:-5])[-1]+'.png')
-#    plt.ylim(0,20)
-#    plt.savefig(savepath)
-#    plt.clf()
-#    plt.close()
+def makeDotImages(data,locs,box_size,fitsfilename,wavelength,bkg,savepath='./'):
+    bkgsub = data - bkg.background
+    ncolplts = 3
+    nrowplts = np.ceil(len(locs)/ncolplts).astype(np.int)
+    fig,ax = plt.subplots(nrowplts,ncolplts)
+    fig.set_size_inches((16,8))
+    ax1 = fig.add_subplot(111,frameon=False)
+    plt.tick_params(labelcolor='none', top='off', bottom='off', left='off', right='off')
+    plt.grid(False)
+    plt.title('%snm'%wavelength)
+    for i,loc in enumerate(locs):
+        row = np.floor(np.float(i)/np.float(ncolplts)).astype(np.int)
+        col = i % ncolplts
+        region = bkgsub[loc[0]-box_size:loc[0]+box_size,loc[1]-box_size:loc[1]+box_size]
+        img = ax[row,col].imshow(region,vmin=-200,vmax=200,origin='lower')
+        ax[row,col].text(5,5,'%d' % i,
+                 color='w',size=16)
+    while col < ncolplts:
+        ax[row,col].axis('off')
+        col += 1
+    fig.colorbar(img, ax=ax.ravel().tolist())
+    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'diagnostics')):
+        os.makedirs(os.path.join(os.path.dirname(fitsfilename),'diagnostics'))
+    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'diagnostics','local_images')):
+        os.makedirs(os.path.join(os.path.dirname(fitsfilename),'diagnostics','local_images'))
+    savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename),'diagnostics','local_images'),
+                            os.path.split(fitsfilename[:-5])[-1]+'.png')
+    plt.savefig(savepath)
+    plt.clf()
+    plt.close()
 #    
 def filterCosmics(data):
     i  = 0
@@ -280,7 +299,7 @@ def filterCosmics(data):
         count = LaplacianFilter(sigma, mean, seeing, data, CosmicImage)
         total+=count
         i+=1
-    print(" Number of cosmic found ", count)
+    print(" Number of cosmics found ", count)
 #    plt.imshow(CosmicImage,origin='lower')
 #    plt.show()
     return CosmicImage

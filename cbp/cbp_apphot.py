@@ -20,7 +20,7 @@ def getStandardParams():
     return params
 
 def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=None,
-               make_plots=True,bkg_method='2d'):
+               make_plots=True,bkg_method='2d',suffix=''):
     #important parameters -- If not given, make assumptions
     if params is None:
         params = getStandardParams()
@@ -53,8 +53,8 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
     
     #Outputs
     #output files + plots
-    pkl_filename = os.path.join(fits_file_path,root_name + '.pkl')
-    tpt_plot_name = os.path.join(fits_file_path,root_name + '.png')
+    pkl_filename = os.path.join(fits_file_path,root_name + suffix + '.pkl')
+    tpt_plot_name = os.path.join(fits_file_path,root_name + suffix + '.png')
     
     
     #initialize input dictionary
@@ -74,6 +74,7 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
     for i,dot in enumerate(info_dict['dot_locs']):
         info_dict['dot%d' % i] = {}
         info_dict['dot%d' % i]['flux'] = []
+        info_dict['dot%d' % i]['raw_flux'] = []
         info_dict['dot%d' % i]['dot_loc'] = []
         info_dict['dot%d' % i]['aper_uncert'] = []
     info_dict['filename'] = []
@@ -106,7 +107,7 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
         data = d[0].data[:,:-30] * params['gain']
         
         # Do some pre-processing of the data
-        cbph.filterCosmics(data)
+#        cbph.filterCosmics(data)
         if params['use_overscan']:
             overscan_array = np.repeat(overscan[:,np.newaxis],data.shape[0],axis=1)
             data = data - overscan_array
@@ -132,6 +133,7 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
         for i in range(len(info_dict['dot_locs'])):
             info_dict['dot%d' % i]['dot_loc'].append(new_locs[i])
             info_dict['dot%d' % i]['flux'].append(phot_table['residual_aperture_sum'][i])
+            info_dict['dot%d' % i]['raw_flux'].append(phot_table['aperture_sum'][i])
             info_dict['dot%d' % i]['aper_uncert'].append(error[i])
         info_dict['dot_locs'] = new_locs
         #====================================================
@@ -140,7 +142,8 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
         #====================================================
         #PLOTTING
         cbph.makeDiagnosticPlots(data,new_locs,params,f,wavelength,bkg)
-        cbph.makeDotHistograms(data,new_locs,20,f,wavelength,bkg)
+        cbph.makeDotHistograms(data,new_locs,10,f,wavelength,bkg)
+        cbph.makeDotImages(data,new_locs,15,f,wavelength,bkg)
         #====================================================
         
     #begin post-processing of photometry
@@ -153,6 +156,7 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
     #calculate throughputs
     for i,dot in enumerate(info_dict['dot_locs']):
         info_dict['dot%d' % i]['flux'] = np.asarray(info_dict['dot%d' % i]['flux'],dtype=np.float)[s]
+        info_dict['dot%d' % i]['raw_flux'] = np.array(info_dict['dot%d' % i]['raw_flux'],dtype=np.float)[s]
         info_dict['dot%d' % i]['dot_loc'] = np.asarray(info_dict['dot%d' % i]['dot_loc'])[s]
         info_dict['dot%d' % i]['aper_uncert'] = np.asarray(info_dict['dot%d' % i]['aper_uncert'])[s]
     info_dict['filename'] = np.asarray(info_dict['filename'],dtype=np.str)[s]
@@ -166,15 +170,17 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
         plt.figure(figsize=(12,12))
     wavelength = info_dict['wavelengths']
     for i in range(len(info_dict['dot_locs'])):
+        info_dict['charge_uncert'] = info_dict['charge']*0.01 + 50. * 1e-11
         x = info_dict['dot%d' % i]['flux'] / info_dict['charge']
         info_dict['dot%d' % i]['raw_tpt'] = np.asarray(x,dtype=np.float)
         info_dict['dot%d' % i]['rel_tpt'] = x/np.max(x[charge_mask])
-        yerr = np.array(info_dict['dot%d'%i]['aper_uncert']) / info_dict['charge'] / np.max(x[charge_mask])
-        info_dict['dot%d' % i]['reltpt_uncert'] = yerr
-        info_dict['dot%d' % i]['reltpt_uncert'] = np.asarray(info_dict['dot%d' % i]['reltpt_uncert'])
+#        yerr = info_dict['dot%d'%i]['aper_uncert'] / info_dict['charge'] / np.max(x[charge_mask])
+        yerr = cbph.getTptUncert(info_dict['dot%d'%i]['aper_uncert'],info_dict['charge_uncert'],
+                                 info_dict['dot%d'%i]['flux'],info_dict['charge'])
+        info_dict['dot%d' % i]['rawtpt_uncert'] = yerr
         if make_plots:
             yerr = np.asarray(yerr)
-            plt.errorbar(wavelength[charge_mask],x[charge_mask]/np.max(x[charge_mask]),yerr=yerr[charge_mask],marker='o',
+            plt.errorbar(wavelength,x/np.max(x[charge_mask]),yerr=yerr/np.max(x[charge_mask]),marker='o',
                          label='%d'%i,ls='-',capsize=3,ms=3)
     
 
@@ -187,7 +193,7 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
     for i in range(len(info_dict['dot_locs'])):
         tptarr[:,i] = np.array(info_dict['dot%d'%i]['raw_tpt']) / np.max(info_dict['dot%d'%i]['raw_tpt'][charge_mask])
     tpts = np.median(tptarr,axis=1)
-    asc_file_name = os.path.join(fits_file_path,root_name+'_median_tpt.txt')
+    asc_file_name = os.path.join(fits_file_path,root_name+suffix+'_median_tpt.txt')
     cbph.makeAsciiFile(wavelength,tpts,info_dict['charge'],fname=asc_file_name)
     
     if make_plots:
