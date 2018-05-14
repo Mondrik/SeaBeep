@@ -10,6 +10,7 @@ import photutils as pt
 import matplotlib.pyplot as plt
 import matplotlib.patches as patch
 import os
+from xml.etree import ElementTree as ET
 
 
 class BkgWrapper:
@@ -18,10 +19,10 @@ class BkgWrapper:
     
 #search via a convolution for center
 def findCenter(data,guess,size=5,search_size=50):
-    lower = guess[0]-search_size
+    lower = np.int(guess[0]-search_size)
     bri = -99
     while lower < guess[0]+search_size:
-        left = guess[1] - search_size
+        left = np.int(guess[1] - search_size)
         while left < guess[1]+search_size:
             tot = np.sum(data[lower:lower+size,left:left+size].flatten())
             if tot > bri:
@@ -62,7 +63,7 @@ def getNewLocs(data,info_dict,params):
             new_locs[1][1] += np.float(info_dict['wavelengths'][-1])*0.53 - 17.61538
     return new_locs
 
-def getBackground(data,fitsfilename,bkg_method='2d',box_size=64,params=None,locs=None):
+def getBackground(data,fitsfilename,bkg_method='2d',box_size=128,params=None,locs=None):
     if bkg_method == '2d':
         bkg_estimator = pt.MedianBackground()
         data_mask = (data<1.1*np.median(data))
@@ -146,50 +147,6 @@ def getTptUncert(aper_uncert,charge_uncert,flux,charge,p=0.84):
 #    return sigmax/sigmay * np.tan(np.pi*(p-0.5)) #quantile function for Cauchy PDF
     return np.sqrt((flux/charge)**2. * ((aper_uncert/flux)**2. + (charge_uncert/charge)**2.))
 
-def makeAuxPlots(wavelength,combine,info_dict):
-    plt.figure()
-    plt.title('FLUX')
-    plt.plot(wavelength,combine/np.max(combine),'-ko',label='Keith')
-    for i in range(len(info_dict['dot_locs'])):
-        plt.plot(wavelength,info_dict['dot%d' % i]['flux']/np.max(info_dict['dot%d' % i]['flux']),label='flux%d' % i)
-    plt.ylim(0,1.01)
-    plt.ylabel('Rel. Value.')
-    plt.xlabel('Wavelength')
-    plt.legend()
-    plt.show(block=False)
-    
-    plt.figure()
-    plt.title('EXP TIME')
-    plt.plot(wavelength,combine/np.max(combine),'-ko',label='Keith')
-    plt.plot(wavelength,info_dict['exp_times']/np.max(info_dict['exp_times']),'-ro',label='Exptime')
-    plt.ylim(0,1.01)
-    plt.xlabel('wavelength')
-    plt.ylabel('Rel. Value')
-    plt.legend()
-    plt.show(block=False)
-    
-    plt.figure()
-    plt.title('BACKGROUND')
-    plt.plot(wavelength,combine/np.max(combine),'-ko',label='Keith')
-    plt.plot(wavelength,info_dict['bkg']/np.mean(info_dict['bkg']),'-ro',
-             label='bkg %d' % np.rint(np.max(info_dict['bkg'])))
-    plt.ylim(0,1.01)
-    plt.xlabel('wavelength')
-    plt.ylabel('Rel. Value')
-    plt.legend()
-    plt.show(block=False)
-    
-    plt.figure()
-    plt.title('SKY')
-    plt.plot(wavelength,combine/np.max(combine),'-ko',label='Keith')
-    for i in range(len(info_dict['dot_locs'])):
-        plt.plot(wavelength,info_dict['dot%d' % i]['bkg_mean']/np.max(info_dict['dot%d' % i]['bkg_mean']),
-                 label='%d'%i)
-    plt.ylim(0,1.01)
-    plt.xlabel('wavelength')
-    plt.ylabel('Rel. Value')
-    plt.show()
-
 def makeDiagnosticPlots(data,locs,params,fitsfilename,wavelength,bkg,savepath='./'):
     plt.figure(figsize=(12,12))
     plt.imshow(data-bkg.background,origin='lower',vmin=-100,vmax=100)
@@ -239,9 +196,14 @@ def makeDiagnosticPlots(data,locs,params,fitsfilename,wavelength,bkg,savepath='.
     
 def makeDotHistograms(data,locs,box_size,fitsfilename,wavelength,bkg,savepath='./'):
     bkgsub = data - bkg.background
+    locs = np.asarray(locs,dtype=np.int)
     plt.figure(figsize=(12,12))
     for i,loc in enumerate(locs):
-        region = bkgsub[loc[0]-box_size:loc[0]+box_size,loc[1]-box_size:loc[1]+box_size].flatten()
+        rmin = loc[0]-box_size
+        rmax = loc[0]+box_size
+        cmin = loc[1]-box_size
+        cmax = loc[1]+box_size
+        region = bkgsub[rmin:rmax,cmin:cmax].flatten()
         plt.hist(region,bins=20,range=[-200,60000],histtype='step',label='%d'%i)
     plt.legend(ncol=2)
     plt.title('%snm' % wavelength)
@@ -258,6 +220,7 @@ def makeDotHistograms(data,locs,box_size,fitsfilename,wavelength,bkg,savepath='.
     
 def makeDotImages(data,locs,box_size,fitsfilename,wavelength,bkg,savepath='./'):
     bkgsub = data - bkg.background
+    locs = np.asarray(locs,dtype=np.int)
     ncolplts = 3
     nrowplts = np.ceil(len(locs)/ncolplts).astype(np.int)
     fig,ax = plt.subplots(nrowplts,ncolplts)
@@ -353,4 +316,40 @@ def makeAsciiFile(waves,tpts,charge,fname):
         out[i] = np.median(tpts[j])
         char[i] = np.median(charge[j])
     np.savetxt(fname,np.column_stack((unique_waves,out,char)),header='WAVE RELTPT CHARGE')
+
+def getXMLDict(file):
+    outDict = {}    
+    tree = ET.parse(file)
+    root = tree.getroot()
+    keithElements = root.findall('./keithley/keithley_element')
+    spectroElements = root.findall('./spectrograph/spectrum')
     
+    #keithley charge was labeled "current" but it is measuring charge.
+    outDict['keithley'] = {}
+    outDict['keithley']['charge'] = np.asarray([i.attrib['current'] for i in keithElements],dtype=np.float)
+    outDict['keithley']['time'] = np.asarray([i.attrib['time'] for i in keithElements],dtype=np.float)
+    
+    outDict['spectrum'] = {}
+    outDict['spectrum']['wavelength'] = np.asarray([i.attrib['wavelength'] for i in spectroElements],dtype=np.float)
+    outDict['spectrum']['counts'] = np.asarray([i.attrib['intensity'] for i in spectroElements],dtype=np.float)
+    return outDict
+
+def makeSpectrumPlot(xmlDict,nominalWave,fitsfilename):
+    wave = xmlDict['spectrum']['wavelength']
+    counts = xmlDict['spectrum']['counts']
+    nominalWave = np.float(nominalWave)
+    plt.figure(figsize=(12,12))
+    plt.plot(wave,counts,'-k')
+    plt.axvline(nominalWave,ls='--',color='r')
+    plt.title('Nominal Wavelength: {}'.format(nominalWave))
+    plt.xlabel('Wavelength [nm]',size=16)
+    plt.ylabel('Counts',size=16)
+    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'diagnostics')):
+        os.makedirs(os.path.join(os.path.dirname(fitsfilename),'diagnostics'))
+    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'diagnostics','spectrum')):
+        os.makedirs(os.path.join(os.path.dirname(fitsfilename),'diagnostics','spectrum'))
+    savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename),'diagnostics','spectrum'),
+                            os.path.split(fitsfilename[:-5])[-1]+'.png')
+    plt.savefig(savepath)
+    plt.clf()
+    plt.close()

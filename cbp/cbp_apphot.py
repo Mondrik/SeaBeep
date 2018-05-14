@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import os
 import pickle
 import cbp_helpers as cbph
+import time
 
 def getStandardParams():
     params = {}
@@ -21,6 +22,7 @@ def getStandardParams():
 
 def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=None,
                make_plots=True,bkg_method='2d',suffix=''):
+    startTime = time.time()
     #important parameters -- If not given, make assumptions
     if params is None:
         params = getStandardParams()
@@ -89,15 +91,15 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
         #cut off last 30 columns, as they are overscan
         flat = flatd[0].data[:,:-30]
     
-    for f in file_list[sort_idxs]:
+    for fnum,f in enumerate(file_list[sort_idxs]):
         #====================================================
         #File IO + header parsing
         info_dict['filename'].append(f)
         d = pft.open(f)
         hdr_comment = d[0].header['COMMENT'][2]
         wavelength = hdr_comment.split(' ')[1]
-        print(os.path.split(f)[-1],wavelength)
-        time = hdr_comment.split(' ')[3]
+        print(os.path.split(f)[-1],wavelength,'{} of {}'.format(fnum+1,len(file_list)))
+        expTime = hdr_comment.split(' ')[3]
         shutter_stat = hdr_comment.split(' ')[-1]
         #we don't use the CBP off data
         if shutter_stat == 'closed':
@@ -107,7 +109,7 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
         data = d[0].data[:,:-30] * params['gain']
         
         # Do some pre-processing of the data
-#        cbph.filterCosmics(data)
+        #cbph.filterCosmics(data)
         if params['use_overscan']:
             overscan_array = np.repeat(overscan[:,np.newaxis],data.shape[0],axis=1)
             data = data - overscan_array
@@ -115,7 +117,7 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
             data = data / flat
     
         info_dict['wavelengths'].append(np.float(wavelength))
-        info_dict['exp_times'].append(np.float(time))
+        info_dict['exp_times'].append(np.float(expTime))
         #====================================================
         
         #====================================================
@@ -138,12 +140,16 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
         info_dict['dot_locs'] = new_locs
         #====================================================
         
-        
         #====================================================
         #PLOTTING
         cbph.makeDiagnosticPlots(data,new_locs,params,f,wavelength,bkg)
-        cbph.makeDotHistograms(data,new_locs,10,f,wavelength,bkg)
-        cbph.makeDotImages(data,new_locs,15,f,wavelength,bkg)
+        if not params['ronchi']:
+            cbph.makeDotHistograms(data,new_locs,10,f,wavelength,bkg)
+            cbph.makeDotImages(data,new_locs,15,f,wavelength,bkg)
+        xmlName = os.path.join(fits_file_path,
+                               os.path.join('xml',os.path.split(f)[-1][:-5]+'.xml'))
+        xmlDict = cbph.getXMLDict(xmlName)
+        cbph.makeSpectrumPlot(xmlDict,wavelength,f)
         #====================================================
         
     #begin post-processing of photometry
@@ -205,4 +211,5 @@ def processCBP(params=None,fits_file_path=None,flat_directory=None,flat_name=Non
         plt.savefig(tpt_plot_name)
         plt.show()
     
+    print('Processing took {:6.1f} seconds.'.format(time.time()-startTime))
     return info_dict
