@@ -23,6 +23,7 @@ def getStandardParams():
 
 def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
     start_time = time.time()
+    master_bias = cbph.MasterBias()
     #  important parameters -- If not given, make assumptions
     if params is None:
         params = getStandardParams()
@@ -72,22 +73,31 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
         #  File IO + header parsing
         info_dict['filename'].append(f)
         info_dict['dark_filename'].append(file_list[fnum-1])
-        ddark = pft.open(file_list[fnum-1])
+        dark = pft.open(file_list[fnum-1]) # should turn this into a "getDark" routine...
+        dark_data = dark[0].data.astype(np.float)
+        dark_bias = master_bias(dark[0])
+        dark_data = dark_data - dark_bias
         d = pft.open(f)
         wavelength = np.float(d[0].header['laserwavelength'])
         print(os.path.split(f)[-1], wavelength, '{:.0f} of {:.0f}'.format((fnum+1)/2, len(file_list)/2))
         expTime = np.float(d[0].header['EXPTIME'])
-        data = d[0].data.astype(np.float) - ddark[0].data.astype(np.float)
+        bias = master_bias(d[0])
+        data = d[0].data.astype(np.float) - bias - dark_data
         data = data * params['gain']
 
         info_dict['wavelengths'].append(np.float(wavelength))
         info_dict['exp_times'].append(np.float(expTime))
-        info_dict['charge'].append(np.max(d['PHOTOCOUNT'].data['phd']))
+        phd = d['PHOTOCOUNT'].data['phd']
+        phd_time = d['PHOTOCOUNT'].data['time']
+        bkg_charge = cbph.estimate_charge_bkg(phd_time, phd, expTime)
+        # print('Initial phd charge: {} bkg charge: {}'.format(np.max(phd), bkg_charge))
+        info_dict['charge'].append(np.max(phd)-bkg_charge)
         #  ====================================================
 
         #  ====================================================
         #  determine spot locations
-        new_locs = cbph.getNewLocs(data, info_dict, params)
+        # new_locs = cbph.getNewLocs(data, info_dict, params)
+        new_locs = dot_locs
         #  =====================================================
 
         #  =====================================================
@@ -107,7 +117,7 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
 
         #  ====================================================
         #  PLOTTING
-        cbph.makeDiagnosticPlots(data, new_locs, params, f, wavelength)
+        cbph.makeDiagnosticPlots(data, new_locs, params, f, wavelength, dark_data)
         cbph.makeDotHistograms(data, new_locs, params['ap_phot_rad'], f, wavelength)
         cbph.makeDotImages(data, new_locs, params['ap_phot_rad'], f, wavelength)
         # cbph.makeSpectrumPlot(xmlDict,wavelength,f)

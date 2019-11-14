@@ -21,11 +21,11 @@ phot_rads = [45]#[20,25,30,35,40,45,50,55,60]
 for pr in phot_rads:
     params = {}
     params['ap_phot_rad'] = pr
-    params['sky_rad_in'] = 0 # params['ap_phot_rad'] + 5
-    params['sky_rad_out'] = 0 # params['sky_rad_in'] + 5
+    params['sky_rad_in'] = params['ap_phot_rad'] + 5
+    params['sky_rad_out'] = params['sky_rad_in'] + 5
     params['search_rad'] = 10
     params['can_move'] = True
     params['gain'] = 1.
     params['min_charge'] = 0.5e-7
-    info_dict = cap.processCBP(fits_file_path='/media/sf_LM_Shared/cbp_france/full_tpt_2nm_scan',
+    info_dict = cap.processCBP(fits_file_path='/media/sf_LM_Shared/cbp_france/test_bias_sub',
                    params=params, suffix='_%d'%pr, make_plots=True)

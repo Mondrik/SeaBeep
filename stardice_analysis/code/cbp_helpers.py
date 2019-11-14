@@ -10,7 +10,7 @@ import photutils as pt
 import matplotlib.pyplot as plt
 import matplotlib.patches as patch
 import os
-from xml.etree import ElementTree as ET
+import astropy.io.fits as pft
 
 #search via a convolution for center
 def findCenter(data,guess,size=5,search_size=50):
@@ -45,15 +45,44 @@ def getNewLocs(data,info_dict,params):
         new_locs = info_dict['dot_locs']
     return new_locs
 
+class MasterBias():
+    def __init__(self, filename='../data/master_bias.fits'):
+        self.header_key = 'IMREDMB'
+        self.filename = filename
+        with pft.open(filename) as fid:
+            self.data = fid[0].data
+            self.header = fid[0].header
+        self.m = self.header['MEANPOWR']
+        self.slope = self.header['POWRSLOP']
+
+    def __call__(self, image, force=False):
+        if 'REG_POWR' in image.header:
+            return self.data + self.slope * (image.REG_POWR - self.m)
+        elif 'REG-POWR' in image.header:
+            return self.data + self.slope * (image.header['REG-POWR'] - self.m)
+        else:
+            logging.error('Peletier Power not registered in image header. Bias level cannot be computed accurately.')
+            if force:
+                return self.data
+            else:
+                raise KeyError('REG_POWR missing in image header')
+
 def doAperturePhotometry(locs, data, fitsfilename, params):
     aplocs = []
+    if params['sky_rad_in'] != 0.:
+        do_sky_sub = True
     for i, pair in enumerate(locs):
         aplocs.append(pair[::-1])
 
     apertures = pt.CircularAperture(aplocs, r=params['ap_phot_rad'])
+    if do_sky_sub:
+        sky_apertures = pt.CircularAnnulus(aplocs, r_in=params['sky_rad_in'], r_out=params['sky_rad_out'])
+        sky_table = pt.aperture_photometry(data, sky_apertures, method='subpixel', subpixels=10)
     uncert_table = pt.aperture_photometry(data, apertures, method='subpixel', subpixels=10)
     phot_table = pt.aperture_photometry(data,apertures,method='subpixel',subpixels=10)
-    phot_table['residual_aperture_sum'] = phot_table['aperture_sum']
+
+    area_ratio = apertures.area() / sky_apertures.area()
+    phot_table['residual_aperture_sum'] = phot_table['aperture_sum'] - sky_table['aperture_sum']*area_ratio
 
     uncert_final = np.sqrt(uncert_table['aperture_sum'])
     return phot_table, uncert_final
@@ -69,7 +98,8 @@ def getTptUncert(aper_uncert,charge_uncert,flux,charge,p=0.84):
     return np.sqrt((flux/charge)**2. * ((aper_uncert/flux)**2. + (charge_uncert/charge)**2.))
 
 
-def makeDiagnosticPlots(data, locs, params, fitsfilename, wavelength, savepath='./'):
+def makeDiagnosticPlots(data, locs, params, fitsfilename, wavelength, dark_data, savepath='./'):
+    #  Plot an image of the entire data frame, with circles drawn on aperture and sky aperture locations
     plt.figure(figsize=(12, 12))
     plt.imshow(data, origin='lower', vmin=-100, vmax=100)
     wedges = []
@@ -94,7 +124,7 @@ def makeDiagnosticPlots(data, locs, params, fitsfilename, wavelength, savepath='
 
     plt.colorbar(orientation='horizontal')
     plt.title(os.path.split(fitsfilename[:-5])[-1])
-    plt.text(700, 50, '%snm' % wavelength, color='w', size=16)
+    plt.text(625, 50, '%snm' % wavelength, color='w', size=16)
     if not os.path.exists(os.path.join(os.path.dirname(fitsfilename), 'diagnostics')):
         os.makedirs(os.path.join(os.path.dirname(fitsfilename), 'diagnostics'))
     if not os.path.exists(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'images')):
@@ -105,6 +135,7 @@ def makeDiagnosticPlots(data, locs, params, fitsfilename, wavelength, savepath='
     plt.clf()
     plt.close()
 
+    #  Plot a histogram of the entire data frame
     if not os.path.exists(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'histograms')):
         os.makedirs(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'histograms'))
     savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'histograms'),
@@ -115,6 +146,34 @@ def makeDiagnosticPlots(data, locs, params, fitsfilename, wavelength, savepath='
     plt.savefig(savepath)
     plt.clf()
     plt.close()
+
+    #  Plot a histogram of data - dark over the entire frame
+    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'residuals')):
+        os.makedirs(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'residuals'))
+    savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'residuals'),
+                            os.path.split(fitsfilename[:-5])[-1]+'.png')
+    plt.title('%snm' % wavelength)
+    plt.hist((data - dark_data).flatten(), bins=200, range=[-10000, 65535], histtype='step', color='k')
+    plt.axvline(np.median(data - dark_data), ls='--', color='r')
+    plt.yscale('log')
+    plt.savefig(savepath)
+    plt.clf()
+    plt.close()
+
+    #  Plot an image of the dark frame
+    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'darks')):
+        os.makedirs(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'darks'))
+    savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'darks'),
+                            os.path.split(fitsfilename[:-5])[-1]+'.png')
+
+
+    plt.title('%snm' % wavelength)
+    vmin, vmax = np.percentile(dark_data, [10,90])
+    plt.imshow(dark_data, origin='lower', vmin=vmin, vmax=vmax)
+    plt.savefig(savepath)
+    plt.clf()
+    plt.close()
+
 
 
 def makeDotHistograms(data, locs, box_size, fitsfilename, wavelength, savepath='./'):
@@ -237,6 +296,7 @@ def makeAsciiFile(waves,tpts,charge,fname):
         out[i] = np.median(tpts[j])
         char[i] = np.median(charge[j])
     np.savetxt(fname,np.column_stack((unique_waves,out,char)),header='WAVE RELTPT CHARGE')
+
 def makeSpectrumPlot(xmlDict,nominalWave,fitsfilename):
     wave = xmlDict['spectrum']['wavelength']
     counts = xmlDict['spectrum']['counts']
@@ -256,3 +316,13 @@ def makeSpectrumPlot(xmlDict,nominalWave,fitsfilename):
     plt.savefig(savepath)
     plt.clf()
     plt.close()
+
+def estimate_charge_bkg(time, charge, exptime, nprepost=10):
+    fit = np.polyfit(time[:nprepost], charge[:nprepost], deg=1)
+    bkg_charge = exptime*fit[0]
+    # x = np.linspace(np.min(time), np.max(time), 1000)
+    # p = np.poly1d(fit)
+    # plt.plot(time, charge, 'ro')
+    # plt.plot(x, p(x), '-k')
+    # plt.show()
+    return bkg_charge
