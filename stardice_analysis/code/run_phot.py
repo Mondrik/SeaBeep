@@ -27,5 +27,5 @@ for pr in phot_rads:
     params['can_move'] = True
     params['gain'] = 1.
     params['min_charge'] = 0.5e-7
-    info_dict = cap.processCBP(fits_file_path='/media/sf_LM_Shared/cbp_france/test_bias_sub',
+    info_dict = cap.processCBP(fits_file_path='/media/sf_LM_Shared/cbp_france/repeatability_test_1',
                    params=params, suffix='_%d'%pr, make_plots=True)

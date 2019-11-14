@@ -175,7 +175,6 @@ def makeDiagnosticPlots(data, locs, params, fitsfilename, wavelength, dark_data,
     plt.close()
 
 
-
 def makeDotHistograms(data, locs, box_size, fitsfilename, wavelength, savepath='./'):
     locs = np.asarray(locs,dtype=np.int)
     plt.figure(figsize=(12,12))
@@ -198,6 +197,7 @@ def makeDotHistograms(data, locs, box_size, fitsfilename, wavelength, savepath='
     plt.savefig(savepath)
     plt.clf()
     plt.close()
+
 
 def makeDotImages(data, locs, box_size, fitsfilename, wavelength, savepath='./'):
     locs = np.asarray(locs,dtype=np.int)
@@ -229,7 +229,23 @@ def makeDotImages(data, locs, box_size, fitsfilename, wavelength, savepath='./')
     plt.savefig(savepath)
     plt.clf()
     plt.close()
-#
+
+
+def reduceSpectra(specs):
+    wavelengths = specs['wl']
+    counts = np.zeros_like(wavelengths)
+    i = 0
+    while True:
+        try:
+            counts += specs['flux%d'%i] - np.median(specs['flux%d'%i])
+            i += 1
+        except:
+            break
+    collapsed_spec = np.column_stack((wavelengths, counts))
+    # TODO: Add code to centroid spectrum
+    return collapsed_spec
+
+
 def filterCosmics(data):
     i  = 0
     count = 1000000

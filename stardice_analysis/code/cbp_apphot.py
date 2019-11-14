@@ -94,6 +94,9 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
         info_dict['charge'].append(np.max(phd)-bkg_charge)
         #  ====================================================
 
+        #  Process Spectra
+        info_dict['spectrum'] = cbph.reduceSpectra(d['SPECTRA'].data)
+
         #  ====================================================
         #  determine spot locations
         # new_locs = cbph.getNewLocs(data, info_dict, params)
