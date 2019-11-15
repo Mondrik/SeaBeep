@@ -130,7 +130,6 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
         mapfunc = partial(processImage, file_list, params, dot_locs)
         res = pool.map(mapfunc, fnum)
     for fnum, filename, wavelength, expTime, charge, spectrum, flux, raw_flux, aper_uncert in res:
-        print(fnum,filename,wavelength,expTime,charge)
         i = np.int((fnum-1)/2) # image number for a given file number
         info_dict['filename'][i] = filename
         info_dict['wavelengths'][i] = wavelength
@@ -183,6 +182,9 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
     asc_file_name = os.path.join(fits_file_path,root_name+suffix+'_median_tpt.txt')
     cbph.makeAsciiFile(wavelength, tpts, info_dict['charge'], fname=asc_file_name)
 
+    print('Processing took {:6.1f} seconds.'.format(time.time()-start_time))
+
+
     if make_plots:
         plt.ylim(0,1.1)
         plt.axhline(y=0,ls='--')
@@ -192,5 +194,4 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
         plt.savefig(tpt_plot_name)
         plt.show()
 
-    print('Processing took {:6.1f} seconds.'.format(time.time()-start_time))
-    return info_dict
+        return info_dict
