@@ -126,7 +126,7 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
     #  then, flist[fnum-1] is the dark for flist[fnum]
     fnum = np.arange(0,len(file_list),1)[1::2]
 
-    with mp.Pool(processes=2) as pool:
+    with mp.Pool() as pool:
         mapfunc = partial(processImage, file_list, params, dot_locs)
         res = pool.map(mapfunc, fnum)
     for fnum, filename, wavelength, expTime, charge, spectrum, flux, raw_flux, aper_uncert in res:

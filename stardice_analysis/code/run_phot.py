@@ -27,5 +27,5 @@ for pr in phot_rads:
     params['can_move'] = True
     params['gain'] = 1.
     params['min_charge'] = 0.5e-7
-    info_dict = cap.processCBP(fits_file_path='/media/sf_LM_Shared/cbp_france/nd_filter_rescan',
+    info_dict = cap.processCBP(fits_file_path='/home/mondrik/CBP/paris_data/Vi_1nm_scan',
                    params=params, suffix='_%d'%pr, make_plots=True)

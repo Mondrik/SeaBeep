@@ -81,7 +81,7 @@ def doAperturePhotometry(locs, data, fitsfilename, params):
     uncert_table = pt.aperture_photometry(data, apertures, method='subpixel', subpixels=10)
     phot_table = pt.aperture_photometry(data,apertures,method='subpixel',subpixels=10)
 
-    area_ratio = apertures.area() / sky_apertures.area()
+    area_ratio = apertures.area / sky_apertures.area
     phot_table['residual_aperture_sum'] = phot_table['aperture_sum'] - sky_table['aperture_sum']*area_ratio
 
     uncert_final = np.sqrt(uncert_table['aperture_sum'])
@@ -100,6 +100,7 @@ def getTptUncert(aper_uncert,charge_uncert,flux,charge,p=0.84):
 
 def makeDiagnosticPlots(data, locs, params, fitsfilename, wavelength, dark_data, savepath='./'):
     #  Plot an image of the entire data frame, with circles drawn on aperture and sky aperture locations
+    plt.ioff()
     plt.figure(figsize=(12, 12))
     plt.imshow(data, origin='lower', vmin=-100, vmax=100)
     wedges = []
@@ -177,6 +178,7 @@ def makeDiagnosticPlots(data, locs, params, fitsfilename, wavelength, dark_data,
 
 def makeDotHistograms(data, locs, box_size, fitsfilename, wavelength, savepath='./'):
     locs = np.asarray(locs,dtype=np.int)
+    plt.ioff()
     plt.figure(figsize=(12,12))
     for i,loc in enumerate(locs):
         rmin = loc[0]-box_size
@@ -200,6 +202,7 @@ def makeDotHistograms(data, locs, box_size, fitsfilename, wavelength, savepath='
 
 
 def makeDotImages(data, locs, box_size, fitsfilename, wavelength, savepath='./'):
+    plt.ioff()
     locs = np.asarray(locs,dtype=np.int)
     ncolplts = 3
     nrowplts = np.ceil(len(locs)/ncolplts).astype(np.int)
@@ -314,6 +317,7 @@ def makeAsciiFile(waves,tpts,charge,fname):
     np.savetxt(fname,np.column_stack((unique_waves,out,char)),header='WAVE RELTPT CHARGE')
 
 def makeSpectrumPlot(xmlDict,nominalWave,fitsfilename):
+    plt.ioff()
     wave = xmlDict['spectrum']['wavelength']
     counts = xmlDict['spectrum']['counts']
     nominalWave = np.float(nominalWave)
