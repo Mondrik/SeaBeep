@@ -142,10 +142,6 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
             info_dict['dot%d' % s]['raw_flux'][i] = raw_flux[s]
             info_dict['dot%d' % s]['aper_uncert'][i] = aper_uncert[s]
 
-
-
->>>>>>> parallel
-
     #  begin post-processing of photometry
     #  ========================================================
 
