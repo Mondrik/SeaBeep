@@ -65,6 +65,7 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
     info_dict['wavelengths'] = []
     info_dict['exp_times'] = []
     info_dict['charge'] = []
+    info_dict['ndfilter_pos'] = []
 
     #  slicing selects light images only
     #  then, fnum-1 is the dark for that exposure
@@ -87,6 +88,8 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
 
         info_dict['wavelengths'].append(np.float(wavelength))
         info_dict['exp_times'].append(np.float(expTime))
+        info_dict['ndfilter_pos'].append(np.float(d[0].header['ndfilterpos'])
+
         phd = d['PHOTOCOUNT'].data['phd']
         phd_time = d['PHOTOCOUNT'].data['time']
         bkg_charge = cbph.estimate_charge_bkg(phd_time, phd, expTime)
