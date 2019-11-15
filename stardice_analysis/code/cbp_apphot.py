@@ -7,6 +7,8 @@ import pickle
 import cbp_helpers as cbph
 import time
 import cbp_calib as cc
+import multiprocessing as mp
+from functools import partial
 
 
 def getStandardParams():
@@ -20,7 +22,7 @@ def getStandardParams():
     params['min_charge'] = 0.5E-7
     return params
 
-def processImage(image_num, file_list, params, data, dot_locs):
+def processImage(file_list, params, dot_locs, image_num):
     #  File IO + header parsing
     f = file_list[image_num]
     i = image_num
@@ -54,24 +56,20 @@ def processImage(image_num, file_list, params, data, dot_locs):
 
     #  =====================================================
     #  Aperture photometry
-    phot_table, error = cbph.doAperturePhotometry(new_locs,data,f,params)
+    phot_table, uncert = cbph.doAperturePhotometry(dot_locs,data,f,params)
 
     #  =====================================================
     #  Update info dictionary with new photometry + locations
-    for i in range(len(info_dict['dot_locs'])):
-        info_dict['dot%d' % i]['dot_loc'].append(new_locs[i])
-        info_dict['dot%d' % i]['flux'].append(phot_table['residual_aperture_sum'][i])
-        info_dict['dot%d' % i]['raw_flux'].append(phot_table['aperture_sum'][i])
-        info_dict['dot%d' % i]['aper_uncert'].append(error[i])
-    info_dict['dot_locs'] = new_locs
-
+    flux = phot_table['residual_aperture_sum']
+    raw_flux = phot_table['aperture_sum']
+    aper_uncert = uncert
     #  ====================================================
     #  PLOTTING
-    cbph.makeDiagnosticPlots(data, new_locs, params, f, wavelength, dark_data)
-    cbph.makeDotHistograms(data, new_locs, params['ap_phot_rad'], f, wavelength)
-    cbph.makeDotImages(data, new_locs, params['ap_phot_rad'], f, wavelength)
+    cbph.makeDiagnosticPlots(data, dot_locs, params, f, wavelength, dark_data)
+    cbph.makeDotHistograms(data, dot_locs, params['ap_phot_rad'], f, wavelength)
+    cbph.makeDotImages(data, dot_locs, params['ap_phot_rad'], f, wavelength)
 
-    return None
+    return i, f, wavelength, expTime, charge, spectrum, flux, raw_flux, aper_uncert
 
 
 def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
@@ -117,7 +115,6 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
         info_dict['dot%d' % i] = {}
         info_dict['dot%d' % i]['flux'] = np.zeros(n_images).astype(np.float)
         info_dict['dot%d' % i]['raw_flux'] = np.zeros(n_images).astype(np.float)
-        info_dict['dot%d' % i]['dot_loc'] = np.zeros(n_images).astype(np.float)
         info_dict['dot%d' % i]['aper_uncert'] = np.zeros(n_images).astype(np.float)
     info_dict['filename'] = np.zeros(n_images).astype(np.str)
     info_dict['dark_filename'] = np.zeros(n_images).astype(np.str)
@@ -126,27 +123,35 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
     info_dict['charge'] = np.zeros(n_images).astype(np.float)
 
     #  slicing selects light images only
-    #  then, fnum-1 is the dark for that exposure
-    for fnum, f in zip(np.arange(0, n_images), file_list[1::2]):
-        #  ====================================================
+    #  then, flist[fnum-1] is the dark for flist[fnum]
+    fnum = np.arange(0,len(file_list),1)[1::2]
+
+    with mp.Pool(processes=2) as pool:
+        mapfunc = partial(processImage, file_list, params, dot_locs)
+        res = pool.map(mapfunc, fnum)
+    for fnum, filename, wavelength, expTime, charge, spectrum, flux, raw_flux, aper_uncert in res:
+        print(fnum,filename,wavelength,expTime,charge)
+        i = np.int((fnum-1)/2) # image number for a given file number
+        info_dict['filename'][i] = filename
+        info_dict['wavelengths'][i] = wavelength
+        info_dict['exp_times'][i] = expTime
+        info_dict['charge'][i] = charge
+        info_dict['spec_place'] = spectrum
+        for s in range(len(dot_locs)):
+            info_dict['dot%d' % s]['flux'][i] = flux[s]
+            info_dict['dot%d' % s]['raw_flux'][i] = raw_flux[s]
+            info_dict['dot%d' % s]['aper_uncert'][i] = aper_uncert[s]
+
+
+
 
     #  begin post-processing of photometry
     #  ========================================================
-    #  sort output quantities by wavelength
-    info_dict['wavelengths'] = np.asarray(info_dict['wavelengths'])
-    info_dict['exp_times'] = np.asarray(info_dict['exp_times'])
-    info_dict['charge'] = np.asarray(info_dict['charge'])
 
     # append nominal CBP system efficiency values to dict
     info_dict['cbp_transmission']  = cc.get_cbp_transmission(info_dict['wavelengths'])
 
     #  calculate throughputs
-    for i,dot in enumerate(info_dict['dot_locs']):
-        info_dict['dot%d' % i]['flux'] = np.asarray(info_dict['dot%d' % i]['flux'],dtype=np.float)
-        info_dict['dot%d' % i]['raw_flux'] = np.array(info_dict['dot%d' % i]['raw_flux'],dtype=np.float)
-        info_dict['dot%d' % i]['dot_loc'] = np.asarray(info_dict['dot%d' % i]['dot_loc'])
-        info_dict['dot%d' % i]['aper_uncert'] = np.asarray(info_dict['dot%d' % i]['aper_uncert'])
-    info_dict['filename'] = np.asarray(info_dict['filename'],dtype=np.str)
     charge_mask = info_dict['charge'] > params['min_charge']
     #  ==============================================
 
