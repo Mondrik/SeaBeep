@@ -88,7 +88,7 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
 
         info_dict['wavelengths'].append(np.float(wavelength))
         info_dict['exp_times'].append(np.float(expTime))
-        info_dict['ndfilter_pos'].append(np.float(d[0].header['ndfilterpos'])
+        info_dict['ndfilter_pos'].append(np.float(d[0].header['ndfilterpos']))
 
         phd = d['PHOTOCOUNT'].data['phd']
         phd_time = d['PHOTOCOUNT'].data['time']
