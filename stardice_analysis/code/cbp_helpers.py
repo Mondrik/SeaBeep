@@ -316,17 +316,14 @@ def makeAsciiFile(waves,tpts,charge,fname):
         char[i] = np.median(charge[j])
     np.savetxt(fname,np.column_stack((unique_waves,out,char)),header='WAVE RELTPT CHARGE')
 
-def makeSpectrumPlot(xmlDict,nominalWave,fitsfilename):
+def makeSpectrumPlot(nominalWave, wavelengths, counts, fitsfilename):
     plt.ioff()
-    wave = xmlDict['spectrum']['wavelength']
-    counts = xmlDict['spectrum']['counts']
-    nominalWave = np.float(nominalWave)
     plt.figure(figsize=(12,12))
-    plt.plot(wave,counts,'-k')
+    plt.plot(wavelengths,counts,'-k,')
     plt.axvline(nominalWave,ls='--',color='r')
     plt.title('Nominal Wavelength: {}'.format(nominalWave))
-    plt.xlabel('Wavelength [nm]',size=16)
-    plt.ylabel('Counts',size=16)
+    plt.xlabel('Wavelength [nm]',size=12)
+    plt.ylabel('Counts',size=12)
     if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'diagnostics')):
         os.makedirs(os.path.join(os.path.dirname(fitsfilename),'diagnostics'))
     if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'diagnostics','spectrum')):

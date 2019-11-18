@@ -37,14 +37,13 @@ def processImage(file_list, params, dot_locs, image_num):
 
     d = pft.open(f)
     wavelength = np.float(d[0].header['laserwavelength'])
+    filt = np.int(d[0].header['FILTER'])
     print(os.path.split(f)[-1], wavelength, '{:.0f} of {:.0f}'.format((i+1)/2, len(file_list)/2))
     expTime = np.float(d[0].header['EXPTIME'])
     bias = master_bias(d[0])
     data = d[0].data.astype(np.float) - bias - dark_data
     data = data * params['gain']
 
-    wavelength = np.float(wavelength)
-    expTime = np.float(expTime)
     phd = d['PHOTOCOUNT'].data['phd']
     phd_time = d['PHOTOCOUNT'].data['time']
     bkg_charge = cbph.estimate_charge_bkg(phd_time, phd, expTime)
@@ -68,12 +67,14 @@ def processImage(file_list, params, dot_locs, image_num):
     cbph.makeDiagnosticPlots(data, dot_locs, params, f, wavelength, dark_data)
     cbph.makeDotHistograms(data, dot_locs, params['ap_phot_rad'], f, wavelength)
     cbph.makeDotImages(data, dot_locs, params['ap_phot_rad'], f, wavelength)
+    cbph.makeSpectrumPlot(wavelength, spectrum[:,0], spectrum[:,1], f)
 
-    return i, f, wavelength, expTime, charge, spectrum, flux, raw_flux, aper_uncert
+    return i, f, wavelength, filt, expTime, charge, spectrum, flux, raw_flux, aper_uncert
 
 
 def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
     start_time = time.time()
+
 
     #  important parameters -- If not given, make assumptions
     if params is None:
@@ -118,9 +119,11 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
         info_dict['dot%d' % i]['aper_uncert'] = np.zeros(n_images).astype(np.float)
     info_dict['filename'] = np.zeros(n_images).astype(np.str)
     info_dict['dark_filename'] = np.zeros(n_images).astype(np.str)
+    info_dict['filter'] = np.zeros(n_images).astype(np.int)
     info_dict['wavelengths'] = np.zeros(n_images).astype(np.float)
     info_dict['exp_times'] = np.zeros(n_images).astype(np.float)
     info_dict['charge'] = np.zeros(n_images).astype(np.float)
+    info_dict['spectrum'] = np.zeros((n_images,994,2)).astype(np.float)
 
     #  slicing selects light images only
     #  then, flist[fnum-1] is the dark for flist[fnum]
@@ -129,13 +132,14 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
     with mp.Pool() as pool:
         mapfunc = partial(processImage, file_list, params, dot_locs)
         res = pool.map(mapfunc, fnum)
-    for fnum, filename, wavelength, expTime, charge, spectrum, flux, raw_flux, aper_uncert in res:
+    for fnum, filename, wavelength, filt, expTime, charge, spectrum, flux, raw_flux, aper_uncert in res:
         i = np.int((fnum-1)/2) # image number for a given file number
         info_dict['filename'][i] = filename
         info_dict['wavelengths'][i] = wavelength
+        info_dict['filter'][i] = filt
         info_dict['exp_times'][i] = expTime
         info_dict['charge'][i] = charge
-        info_dict['spec_place'] = spectrum
+        info_dict['spectrum'][i, :, :] = spectrum
         for s in range(len(dot_locs)):
             info_dict['dot%d' % s]['flux'][i] = flux[s]
             info_dict['dot%d' % s]['raw_flux'][i] = raw_flux[s]
@@ -159,7 +163,6 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
         x = info_dict['dot%d' % i]['flux'] / info_dict['charge']
         info_dict['dot%d' % i]['raw_tpt'] = np.asarray(x, dtype=np.float)
         info_dict['dot%d' % i]['rel_tpt'] = x/np.max(x[charge_mask])
-#        yerr = info_dict['dot%d'%i]['aper_uncert'] / info_dict['charge'] / np.max(x[charge_mask])
         yerr = cbph.getTptUncert(info_dict['dot%d'%i]['aper_uncert'], info_dict['charge_uncert'],
                                  info_dict['dot%d'%i]['flux'], info_dict['charge'])
         info_dict['dot%d' % i]['rawtpt_uncert'] = yerr
@@ -168,7 +171,7 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
             r = x / info_dict['cbp_transmission']
             r = r / np.max(r)
             plt.errorbar(wavelength, r ,yerr=yerr/np.max(x[charge_mask]),marker='o',
-                         label='%d'%i,ls='-',capsize=3,ms=3)
+                         label='%d'%i,ls='',capsize=3,ms=3)
 
     with open(pkl_filename, 'wb') as myfile:
         pickle.dump(info_dict, myfile)
