@@ -165,7 +165,6 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
         info_dict['charge_uncert'] = info_dict['charge']*0.01 + 50. * 1e-11
         x = info_dict['dot%d' % i]['flux'] / info_dict['charge']
         info_dict['dot%d' % i]['raw_tpt'] = np.asarray(x, dtype=np.float)
-        return info_dict
         info_dict['dot%d' % i]['rel_tpt'] = x/np.max(x[charge_mask])
         yerr = cbph.getTptUncert(info_dict['dot%d'%i]['aper_uncert'], info_dict['charge_uncert'],
                                  info_dict['dot%d'%i]['flux'], info_dict['charge'])
