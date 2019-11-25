@@ -20,7 +20,17 @@ def getStandardParams():
     params['can_move'] = False
     params['gain'] = 1.
     params['min_charge'] = 0.5E-7
+    params['read_noise'] = 3.
     return params
+
+def getDark(filename, master_bias=None):
+    if master_bias is None:
+        master_bias = cbph.MasterBias()
+
+    dark = pft.open(filename)
+    dark_bias = master_bias(dark[0])
+    return dark[0].data.astype(np.float) - dark_bias
+
 
 def processImage(file_list, params, dot_locs, image_num):
     #  File IO + header parsing
@@ -30,10 +40,7 @@ def processImage(file_list, params, dot_locs, image_num):
 
     filename = file_list[i]
     dark_filename = file_list[i-1]
-    dark = pft.open(dark_filename) # should turn this into a "getDark" routine...
-    dark_data = dark[0].data.astype(np.float)
-    dark_bias = master_bias(dark[0])
-    dark_data = dark_data - dark_bias
+    dark_data = getDark(dark_filename)
 
     d = pft.open(f)
     wavelength = np.float(d[0].header['laserwavelength'])
@@ -51,7 +58,7 @@ def processImage(file_list, params, dot_locs, image_num):
 
     #  ====================================================
     #  Process Spectra
-    spectrum = cbph.reduceSpectra(d['SPECTRA'].data)
+    spectrum, _ = cbph.reduceSpectra(d['SPECTRA'].data)
 
     #  =====================================================
     #  Aperture photometry
@@ -72,7 +79,18 @@ def processImage(file_list, params, dot_locs, image_num):
     return i, f, wavelength, filt, expTime, charge, spectrum, flux, raw_flux, aper_uncert
 
 
-def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
+def processCBP(params=None, fits_file_path=None, make_plots=True, suffix='', show_final=True, no_ap_phot=False):
+    """
+    Routine to extract the throughput values from a CBP scan.  Output is stored in a dictionary, which is saved to the same location as the input files.
+
+    :param params: Input dictionary containing extraction parameters.  If none is provided, use a default guess
+    :param fits_file_path: Path to folder containing fits files.  Should not have a trailing /.
+    :param make_plots: If True, make and save output plots, potentially erasing previous runs plots.
+    :param suffix: Suffix to use for output files.  Can be used to differentiate output products from different processing runs of the same data
+    :param show_final: If true, display the final plot of throughput vs wavelength.  Disabling this is useful for completely headless processing.
+    :param no_ap_phot: Do throughput on a pixel-by-pixel bases.  Most useful with large pinhole/flatfields.
+    """
+
     start_time = time.time()
 
 
@@ -82,12 +100,12 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
 
     #  Inputs
     if fits_file_path is None:
-        raise
+        raise ValueError('No fits_file_path provided')
 
     #  File location and checking
     root_name = os.path.split(fits_file_path)[-1]
     file_list = glob.glob(os.path.join(fits_file_path, '*.fits'))
-    assert(len(file_list) > 0), 'No fits files found in %s' % fits_file_path
+    assert(len(file_list) > 0), 'No fits files found in {}'.format(fits_file_path)
 
     # input file list has to be sorted -- first file is dark, second is light etc
     file_list = sorted(file_list)
@@ -97,7 +115,7 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
 
     # (manually) defines the location of the spots
     spot_file = os.path.join(fits_file_path, root_name+'_spots.txt')
-    assert(os.path.exists(spot_file)), 'Spot file %s not found!' % spot_file
+    assert(os.path.exists(spot_file)), 'Spot file {} not found!'.format(spot_file)
     dot_locs = np.loadtxt(spot_file)
 
     #  Outputs
@@ -112,11 +130,15 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
     info_dict['run_name'] = os.path.split(fits_file_path)[-1]
 
     #  set up our output dictionary
-    for i, dot in enumerate(info_dict['dot_locs']):
-        info_dict['dot%d' % i] = {}
-        info_dict['dot%d' % i]['flux'] = np.zeros(n_images).astype(np.float)
-        info_dict['dot%d' % i]['raw_flux'] = np.zeros(n_images).astype(np.float)
-        info_dict['dot%d' % i]['aper_uncert'] = np.zeros(n_images).astype(np.float)
+    # different in the case of pix-by-pix and aperture modes
+    if no_ap_phot:
+        info_dict['pixel_data'] = {}
+    else:
+        for i, dot in enumerate(info_dict['dot_locs']):
+            info_dict['dot%d' % i] = {}
+            info_dict['dot%d' % i]['flux'] = np.zeros(n_images).astype(np.float)
+            info_dict['dot%d' % i]['raw_flux'] = np.zeros(n_images).astype(np.float)
+            info_dict['dot%d' % i]['aper_uncert'] = np.zeros(n_images).astype(np.float)
     info_dict['filename'] = np.zeros(n_images).astype(np.str)
     info_dict['dark_filename'] = np.zeros(n_images).astype(np.str)
     info_dict['filter'] = np.zeros(n_images).astype(np.int)
@@ -128,22 +150,25 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
     #  slicing selects light images only
     #  then, flist[fnum-1] is the dark for flist[fnum]
     fnum = np.arange(0,len(file_list),1)[1::2]
-
-    with mp.Pool() as pool:
-        mapfunc = partial(processImage, file_list, params, dot_locs)
-        res = pool.map(mapfunc, fnum)
-    for fnum, filename, wavelength, filt, expTime, charge, spectrum, flux, raw_flux, aper_uncert in res:
-        i = np.int((fnum-1)/2) # image number for a given file number
-        info_dict['filename'][i] = filename
-        info_dict['wavelengths'][i] = wavelength
-        info_dict['filter'][i] = filt
-        info_dict['exp_times'][i] = expTime
-        info_dict['charge'][i] = charge
-        info_dict['spectrum'][i, :, :] = spectrum
-        for s in range(len(dot_locs)):
-            info_dict['dot%d' % s]['flux'][i] = flux[s]
-            info_dict['dot%d' % s]['raw_flux'][i] = raw_flux[s]
-            info_dict['dot%d' % s]['aper_uncert'][i] = aper_uncert[s]
+    
+    if no_ap_phot:
+        pass
+    else:
+        with mp.Pool() as pool:
+            mapfunc = partial(processImage, file_list, params, dot_locs)
+            res = pool.map(mapfunc, fnum)
+        for fnum, filename, wavelength, filt, expTime, charge, spectrum, flux, raw_flux, aper_uncert in res:
+            i = np.int((fnum-1)/2) # image number for a given file number
+            info_dict['filename'][i] = filename
+            info_dict['wavelengths'][i] = wavelength
+            info_dict['filter'][i] = filt
+            info_dict['exp_times'][i] = expTime
+            info_dict['charge'][i] = charge
+            info_dict['spectrum'][i, :, :] = spectrum
+            for s in range(len(dot_locs)):
+                info_dict['dot%d' % s]['flux'][i] = flux[s]
+                info_dict['dot%d' % s]['raw_flux'][i] = raw_flux[s]
+                info_dict['dot%d' % s]['aper_uncert'][i] = aper_uncert[s]
 
     #  begin post-processing of photometry
     #  ========================================================
@@ -159,7 +184,7 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
     #  ==============================================
 
     if make_plots:
-        plt.figure(figsize=(12, 12))
+        plt.figure(figsize=(24, 12))
     wavelength = info_dict['wavelengths']
     for i in range(len(info_dict['dot_locs'])):
         info_dict['charge_uncert'] = info_dict['charge']*0.01 + 50. * 1e-11
@@ -198,6 +223,10 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix=''):
         plt.xlabel('Wavelength [nm]')
         plt.ylabel('Relative Throughput\nAdjusted for CBP Trans')
         plt.savefig(tpt_plot_name)
-        plt.show()
+        if show_final:
+            plt.show()
+        else:
+            plt.clf()
+            plt.close()
 
         return info_dict

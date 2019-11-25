@@ -77,21 +77,22 @@ def doAperturePhotometry(locs, data, fitsfilename, params):
     apertures = pt.CircularAperture(aplocs, r=params['ap_phot_rad'])
     if do_sky_sub:
         sky_apertures = pt.CircularAnnulus(aplocs, r_in=params['sky_rad_in'], r_out=params['sky_rad_out'])
-        sky_table = pt.aperture_photometry(data, sky_apertures, method='subpixel', subpixels=10)
-    uncert_table = pt.aperture_photometry(data, apertures, method='subpixel', subpixels=10)
-    phot_table = pt.aperture_photometry(data,apertures,method='subpixel',subpixels=10)
+        sky_table = pt.aperture_photometry(data, sky_apertures, method='subpixel', subpixels=5)
+    phot_table = pt.aperture_photometry(data,apertures,method='subpixel',subpixels=5)
 
     area_ratio = apertures.area / sky_apertures.area
     phot_table['residual_aperture_sum'] = phot_table['aperture_sum'] - sky_table['aperture_sum']*area_ratio
 
-    uncert_final = np.sqrt(uncert_table['aperture_sum'])
+    # factor of 2 from dark subtraction
+    npix = 2*np.ceil(apertures.area) + np.ceil(sky_apertures.area)
+    uncert_final = np.sqrt(phot_table['aperture_sum'] + npix*params['read_noise']**2.)
     return phot_table, uncert_final
 
 
 def getTptUncert(aper_uncert,charge_uncert,flux,charge,p=0.84):
-    # p=0.84 bc 1-sigma (assuming normality) corresponds to 68% of the integral of the population
-    # so (since tan is an odd fn) 1-sigma errorbars are analogous to calculating the 0 +/- 16/84 quantiles to
-    # contain 68% of the random values from the PDF.
+    # p=0.84 # bc 1-sigma (assuming normality) corresponds to 68% of the integral of the population
+    # # so (since tan is an odd fn) 1-sigma errorbars are analogous to calculating the 0 +/- 16/84 quantiles to
+    # # contain 68% of the random values from the PDF.
     # sigmax = aper_uncert
     # sigmay = charge_uncert
     # return sigmax/sigmay * np.tan(np.pi*(p-0.5)) #quantile function for Cauchy PDF
@@ -237,16 +238,16 @@ def makeDotImages(data, locs, box_size, fitsfilename, wavelength, savepath='./')
 def reduceSpectra(specs):
     wavelengths = specs['wl']
     counts = np.zeros_like(wavelengths)
-    i = 0
+    n_specs = 0
     while True:
         try:
-            counts += specs['flux%d'%i] - np.median(specs['flux%d'%i])
-            i += 1
+            counts += specs['flux%d'%n_specs] #- np.median(specs['flux%d'%i])
+            n_specs += 1
         except:
             break
     collapsed_spec = np.column_stack((wavelengths, counts))
     # TODO: Add code to centroid spectrum
-    return collapsed_spec
+    return collapsed_spec, n_specs
 
 
 def filterCosmics(data):
