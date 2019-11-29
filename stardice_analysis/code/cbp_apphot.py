@@ -26,10 +26,19 @@ def getStandardParams():
 def getDark(filename, master_bias=None):
     if master_bias is None:
         master_bias = cbph.MasterBias()
-
     dark = pft.open(filename)
     dark_bias = master_bias(dark[0])
     return dark[0].data.astype(np.float) - dark_bias
+
+def getPhotodiodeCharge(fits_header_list, expTime, phd_keyword='PHOTOCOUNT', bkg_subtract=True):
+    phd = fits_header_list[phd_keyword].data['phd']
+    phd_time = fits_header_list[phd_keyword].data['time']
+    if bkg_subtract:
+        bkg_charge = cbph.estimate_charge_bkg(phd_time, phd, expTime)
+    else:
+        bkg_charge = 0.
+    return np.max(phd) - bkg_charge
+
 
 
 def processImage(file_list, params, dot_locs, image_num):
@@ -51,10 +60,7 @@ def processImage(file_list, params, dot_locs, image_num):
     data = d[0].data.astype(np.float) - bias - dark_data
     data = data * params['gain']
 
-    phd = d['PHOTOCOUNT'].data['phd']
-    phd_time = d['PHOTOCOUNT'].data['time']
-    bkg_charge = cbph.estimate_charge_bkg(phd_time, phd, expTime)
-    charge = np.max(phd) - bkg_charge
+    charge = getPhotodiodeCharge(d, expTime)
 
     #  ====================================================
     #  Process Spectra
@@ -68,7 +74,6 @@ def processImage(file_list, params, dot_locs, image_num):
     #  Update info dictionary with new photometry + locations
     flux = phot_table['residual_aperture_sum']
     raw_flux = phot_table['aperture_sum']
-    aper_uncert = uncert
     #  ====================================================
     #  PLOTTING
     cbph.makeDiagnosticPlots(data, dot_locs, params, f, wavelength, dark_data)
@@ -76,7 +81,7 @@ def processImage(file_list, params, dot_locs, image_num):
     cbph.makeDotImages(data, dot_locs, params['ap_phot_rad'], f, wavelength)
     cbph.makeSpectrumPlot(wavelength, spectrum[:,0], spectrum[:,1], f)
 
-    return i, f, wavelength, filt, expTime, charge, spectrum, flux, raw_flux, aper_uncert
+    return i, f, wavelength, filt, expTime, charge, spectrum, flux, raw_flux, uncert
 
 
 def processCBP(params=None, fits_file_path=None, make_plots=True, suffix='', show_final=True, no_ap_phot=False):
@@ -123,6 +128,10 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix='', sho
     pkl_filename = os.path.join(fits_file_path, root_name + suffix + '.pkl')
     tpt_plot_name = os.path.join(fits_file_path, root_name + suffix + '.png')
 
+    #  Open a test file to get size of fits image (for non-aperture based reductions)
+    header_list = pft.open(file_list[0])
+    im_shape = header_list[0].data.shape
+
     # initialize input dictionary
     info_dict = {}
     info_dict['dot_locs'] = dot_locs
@@ -132,7 +141,8 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix='', sho
     #  set up our output dictionary
     # different in the case of pix-by-pix and aperture modes
     if no_ap_phot:
-        info_dict['pixel_data'] = {}
+        info_dict['pixel_counts'] = np.zeros(im_shape + tuple([n_images]))
+        info_dict['pixel_uncerts'] = np.zeros(im_shape + tuple([n_images]))
     else:
         for i, dot in enumerate(info_dict['dot_locs']):
             info_dict['dot%d' % i] = {}
@@ -205,13 +215,15 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix='', sho
         pickle.dump(info_dict, myfile)
 
     #  make median throughput array + file:
+    #  also individual throughput file
     n = len(info_dict['dot_locs'])
     tptarr = np.zeros((len(wavelength), n)).astype(np.float)
     for i in range(len(info_dict['dot_locs'])):
         tptarr[:, i] = np.array(info_dict['dot%d'%i]['raw_tpt']) / np.max(info_dict['dot%d'%i]['raw_tpt'][charge_mask])
-    tpts = np.median(tptarr, axis=1)
+    tpts = np.mean(tptarr, axis=1)
     asc_file_name = os.path.join(fits_file_path,root_name+suffix+'_median_tpt.txt')
-    cbph.makeAsciiFile(wavelength, tpts, info_dict['charge'], fname=asc_file_name)
+    asc_indiv_dot_file_name = os.path.join(fits_file_path, root_name+suffix+'_indiv_dot.txt')
+    cbph.makeMeanAsciiFile(wavelength, tpts, info_dict['charge'], fname=asc_file_name)
 
     print('Processing took {:6.1f} seconds.'.format(time.time()-start_time))
 

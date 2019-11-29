@@ -307,14 +307,14 @@ def LaplacianFilter(Sigma, Mean, seeing, data, CosmicImage):
     #CosmicImage.Simplify(0.5)
     return count
 
-def makeAsciiFile(waves,tpts,charge,fname):
+def makeMeanAsciiFile(waves,tpts,charge,fname):
     unique_waves = np.array(list(set(waves)))
     out = np.zeros_like(unique_waves)
     char = np.zeros_like(unique_waves)
     for i,w in enumerate(unique_waves):
         j = np.where(waves==w)[0]
-        out[i] = np.median(tpts[j])
-        char[i] = np.median(charge[j])
+        out[i] = np.mean(tpts[j])
+        char[i] = np.mean(charge[j])
     np.savetxt(fname,np.column_stack((unique_waves,out,char)),header='WAVE RELTPT CHARGE')
 
 def makeSpectrumPlot(nominalWave, wavelengths, counts, fitsfilename):
