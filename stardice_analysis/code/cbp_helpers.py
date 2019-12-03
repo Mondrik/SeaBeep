@@ -11,23 +11,39 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patch
 import os
 import astropy.io.fits as pft
+from astropy.convolution import convolve, Gaussian2DKernel
 
-#search via a convolution for center
-def findCenter(data,guess,size=5,search_size=50):
-    lower = np.int(guess[0]-search_size)
-    bri = -99
-    while lower < guess[0]+search_size:
-        left = np.int(guess[1] - search_size)
-        while left < guess[1]+search_size:
-            tot = np.sum(data[lower:lower+size,left:left+size].flatten())
-            if tot > bri:
-                bri = tot
-                colcent = left + np.int(size/2)
-                rowcent = lower + np.int(size/2)
-            left += 1
-        lower += 1
-    return rowcent,colcent
 
+def findCenter(data, guess, search_radius=20, kernel=None, sigma_x=10, sigma_y=10):
+    """
+    Given a set of initial guesses for the locations of spots, convolve the image with a kernel and search the result for a peak within a specified radius
+
+    :param data: image to search
+    :param guess: [row, column] guess for the location of the spot in pixel space
+    :param search_radius: number of pixels away from guess to search.  Symmetric in x and y.
+    :param kernel: If not None, use provided kernel to convolve data.  Must be useable with astropy convolution function
+    :param sigma_x: If kernel is None, use this to set sigma_x for the 2D gaussian smoothing kernel
+    :param sigma_y: If kernel is None, use this to set sigma_y for the 2D gaussian smoothing kernel
+
+    :return locs: [row, column] location of the maximum for the convolved image within the region defined by guess and search_radius
+    """
+    if kernel is None:
+        kernel = Gaussian2DKernel(x_stddev=sigma_x, y_stddev=sigma_y)
+
+    locs = np.zeros_like(guess)
+    conv_image = convolve(data, kernel)
+    for i,g in guess:
+        region = conv_image[guess[0]-search_radius:guess[0]+search_radius+1, guess[1]-search_radius:guess[1]+search_radius+1]
+        loc = np.array(np.unravel_index(np.argmax(region, axis=None), region.shape)).astype(np.int)
+        loc = index + guess
+        locs[i] = loc
+        print(guess)
+        print(loc)
+        print('--')
+        plt.imshow(region, origin='lower')
+        plt.colorbar()
+        plt.show(block=True)
+    return locs
 
 def getNewLocs(data,info_dict,params):
     if params['can_move']:
