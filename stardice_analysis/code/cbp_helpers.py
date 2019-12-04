@@ -32,17 +32,20 @@ def findCenter(data, guess, search_radius=20, kernel=None, sigma_x=10, sigma_y=1
 
     locs = np.zeros_like(guess)
     conv_image = convolve(data, kernel)
-    for i,g in guess:
-        region = conv_image[guess[0]-search_radius:guess[0]+search_radius+1, guess[1]-search_radius:guess[1]+search_radius+1]
-        loc = np.array(np.unravel_index(np.argmax(region, axis=None), region.shape)).astype(np.int)
-        loc = index + guess
+    fig = plt.figure()
+    for i,g in enumerate(guess):
+        region = conv_image[g[0]-search_radius:g[0]+search_radius+1, g[1]-search_radius:g[1]+search_radius+1]
+        index = np.array(np.unravel_index(np.argmax(region, axis=None), region.shape)).astype(np.int)
+        loc = index + g - [search_radius, search_radius]
         locs[i] = loc
-        print(guess)
-        print(loc)
-        print('--')
-        plt.imshow(region, origin='lower')
-        plt.colorbar()
-        plt.show(block=True)
+        #print(index)
+        #print(g)
+        #print(loc)
+        #print('--')
+        #plt.imshow(region, origin='lower')
+        #plt.plot(index[1], index[0], 'rs')
+        #plt.colorbar()
+        #plt.show(block=True)
     return locs
 
 def getNewLocs(data,info_dict,params):
