@@ -38,14 +38,6 @@ def findCenter(data, guess, search_radius=20, kernel=None, sigma_x=10, sigma_y=1
         index = np.array(np.unravel_index(np.argmax(region, axis=None), region.shape)).astype(np.int)
         loc = index + g - [search_radius, search_radius]
         locs[i] = loc
-        #print(index)
-        #print(g)
-        #print(loc)
-        #print('--')
-        #plt.imshow(region, origin='lower')
-        #plt.plot(index[1], index[0], 'rs')
-        #plt.colorbar()
-        #plt.show(block=True)
     return locs
 
 def getNewLocs(data,info_dict,params):
@@ -356,7 +348,7 @@ def makeSpectrumPlot(nominalWave, wavelengths, counts, fitsfilename):
 
 def estimate_charge_bkg(time, charge, exptime, nprepost=10):
     fit = np.polyfit(time[:nprepost], charge[:nprepost], deg=1)
-    bkg_charge = exptime*fit[0]
+    bkg_charge = charge[0] + exptime*fit[0]
     # x = np.linspace(np.min(time), np.max(time), 1000)
     # p = np.poly1d(fit)
     # plt.plot(time, charge, 'ro')
