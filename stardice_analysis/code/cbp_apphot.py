@@ -9,6 +9,7 @@ import time
 import cbp_calib as cc
 import multiprocessing as mp
 from functools import partial
+import copy
 
 
 def getStandardParams():
@@ -41,7 +42,7 @@ def getPhotodiodeCharge(fits_header_list, expTime, phd_keyword='PHOTOCOUNT', bkg
 
 
 
-def processImage(file_list, params, dot_locs, image_num):
+def processImage(file_list, params, dot_locs, imps, image_num):
     #  File IO + header parsing
     f = file_list[image_num]
     i = image_num
@@ -53,7 +54,10 @@ def processImage(file_list, params, dot_locs, image_num):
 
     d = pft.open(f)
     wavelength = np.float(d[0].header['laserwavelength'])
-    filt = np.int(d[0].header['FILTER'])
+    try:
+        filt = np.int(d[0].header['FILTER'])
+    except ValueError:
+        filt = np.int(-99)
     print(os.path.split(f)[-1], wavelength, '{:.0f} of {:.0f}'.format((i+1)/2, len(file_list)/2))
     expTime = np.float(d[0].header['EXPTIME'])
     bias = master_bias(d[0])
@@ -62,13 +66,33 @@ def processImage(file_list, params, dot_locs, image_num):
 
     charge = getPhotodiodeCharge(d, expTime)
 
+    #  If we are allowed to move, check to see if we need to offset grid:
+    shifts = {}
+    if params['can_move']:
+        new_dot_locs = copy.deepcopy(dot_locs)
+        for k in imps.keys():
+            if float(d[0].header[k]) != imps[k]:
+                shifts[k] = float(d[0].header[k]) - imps[k]
+        #  This will only trigger if there are >0 keys in shifts
+        if shifts:
+            sv = np.zeros((1, 2))
+            for k in shifts.keys():
+                sv += params['mount_derivatives'][k] * shifts[k]
+            sv = np.repeat(sv, len(new_dot_locs), axis=0)
+            new_dot_locs += sv
+    else:
+        new_dot_locs = dot_locs
+
     #  ====================================================
     #  Process Spectra
-    spectrum, _ = cbph.reduceSpectra(d['SPECTRA'].data)
+    if params['process_spectra']:
+        spectrum, _ = cbph.reduceSpectra(d['SPECTRA'].data)
+    else:
+        spectrum = None
 
     #  =====================================================
     #  Aperture photometry
-    phot_table, uncert = cbph.doAperturePhotometry(dot_locs,data,f,params)
+    phot_table, uncert = cbph.doAperturePhotometry(new_dot_locs,data,f,params)
 
     #  =====================================================
     #  Update info dictionary with new photometry + locations
@@ -76,12 +100,13 @@ def processImage(file_list, params, dot_locs, image_num):
     raw_flux = phot_table['aperture_sum']
     #  ====================================================
     #  PLOTTING
-    cbph.makeDiagnosticPlots(data, dot_locs, params, f, wavelength, dark_data)
-    cbph.makeDotHistograms(data, dot_locs, params['ap_phot_rad'], f, wavelength)
-    cbph.makeDotImages(data, dot_locs, params['ap_phot_rad'], f, wavelength)
-    cbph.makeSpectrumPlot(wavelength, spectrum[:,0], spectrum[:,1], f)
+    cbph.makeDiagnosticPlots(data, new_dot_locs, params, f, wavelength, dark_data)
+    cbph.makeDotHistograms(data, new_dot_locs, params['ap_phot_rad'], f, wavelength)
+    cbph.makeDotImages(data, new_dot_locs, params['ap_phot_rad'], f, wavelength)
+    if params['process_spectra']:
+        cbph.makeSpectrumPlot(wavelength, spectrum[:,0], spectrum[:,1], f)
 
-    return i, f, wavelength, filt, expTime, charge, spectrum, flux, raw_flux, uncert
+    return i, f, wavelength, filt, expTime, charge, spectrum, flux, raw_flux, uncert, new_dot_locs
 
 
 def processCBP(params=None, fits_file_path=None, make_plots=True, suffix='', show_final=True, no_ap_phot=False):
@@ -132,11 +157,27 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix='', sho
     header_list = pft.open(file_list[0])
     im_shape = header_list[0].data.shape
 
+    #  Also assume that first file has accurate values for cbpmount pointing
+    #  IMP = Initial_Mount_Pointings
+    try:
+        keys = ['cbpmountalt', 'cbpmountaz', 'mountalpha', 'mountdelta']
+        imps = {}
+        print('Inital pointings:')
+        for k in keys:
+            imps[k] = np.float(header_list[0].header[k])
+            print(k, imps[k])
+    except KeyError:
+        print('No pointing headers found (this usually happens with old fits files. Setting imps to 0')
+        print('Note that if this occurs, you will probably also have to set the \'can_move\' param value to False.')
+        for k in keys:
+            imps[k] = 0.
+
     # initialize input dictionary
     info_dict = {}
     info_dict['dot_locs'] = dot_locs
     info_dict['params'] = params
     info_dict['run_name'] = os.path.split(fits_file_path)[-1]
+    info_dict['imps'] = imps
 
     #  set up our output dictionary
     # different in the case of pix-by-pix and aperture modes
@@ -149,13 +190,15 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix='', sho
             info_dict['dot%d' % i]['flux'] = np.zeros(n_images).astype(np.float)
             info_dict['dot%d' % i]['raw_flux'] = np.zeros(n_images).astype(np.float)
             info_dict['dot%d' % i]['aper_uncert'] = np.zeros(n_images).astype(np.float)
+            info_dict['dot%d' % i]['dot_loc'] = np.zeros((n_images, 2)).astype(np.float)
     info_dict['filename'] = np.zeros(n_images).astype(np.str)
     info_dict['dark_filename'] = np.zeros(n_images).astype(np.str)
     info_dict['filter'] = np.zeros(n_images).astype(np.int)
     info_dict['wavelengths'] = np.zeros(n_images).astype(np.float)
     info_dict['exp_times'] = np.zeros(n_images).astype(np.float)
     info_dict['charge'] = np.zeros(n_images).astype(np.float)
-    info_dict['spectrum'] = np.zeros((n_images,994,2)).astype(np.float)
+    if params['process_spectra']:
+        info_dict['spectrum'] = np.zeros((n_images,994,2)).astype(np.float)
 
     #  slicing selects light images only
     #  then, flist[fnum-1] is the dark for flist[fnum]
@@ -165,20 +208,23 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix='', sho
         pass
     else:
         with mp.Pool() as pool:
-            mapfunc = partial(processImage, file_list, params, dot_locs)
+            mapfunc = partial(processImage, file_list, params, dot_locs, imps)
             res = pool.map(mapfunc, fnum)
-        for fnum, filename, wavelength, filt, expTime, charge, spectrum, flux, raw_flux, aper_uncert in res:
+        for fnum, filename, wavelength, filt, expTime, charge, spectrum, flux, raw_flux, aper_uncert, ndl in res:
             i = np.int((fnum-1)/2) # image number for a given file number
             info_dict['filename'][i] = filename
             info_dict['wavelengths'][i] = wavelength
             info_dict['filter'][i] = filt
             info_dict['exp_times'][i] = expTime
             info_dict['charge'][i] = charge
-            info_dict['spectrum'][i, :, :] = spectrum
+            if params['process_spectra']:
+                info_dict['spectrum'][i, :, :] = spectrum
             for s in range(len(dot_locs)):
                 info_dict['dot%d' % s]['flux'][i] = flux[s]
                 info_dict['dot%d' % s]['raw_flux'][i] = raw_flux[s]
                 info_dict['dot%d' % s]['aper_uncert'][i] = aper_uncert[s]
+                info_dict['dot%d' % s]['dot_loc'][i] = ndl[s]
+
 
     #  begin post-processing of photometry
     #  ========================================================
