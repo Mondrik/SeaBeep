@@ -14,22 +14,24 @@ import astropy.io.fits as pft
 from astropy.convolution import convolve, Gaussian2DKernel
 
 
-def findCenter(data, guess, search_radius=20, kernel=None, sigma_x=10, sigma_y=10):
+def findCenter(data, guess, search_radius=20, kernel=None, sigma_x=10, sigma_y=10, enforce_colinear=False):
     """
     Given a set of initial guesses for the locations of spots, convolve the image with a kernel and search the result for a peak within a specified radius
 
     :param data: image to search
-    :param guess: [row, column] guess for the location of the spot in pixel space
+    :param guess: [row, column] guess for the location of the spot in pixel space. Must be an numpy array of ints.
     :param search_radius: number of pixels away from guess to search.  Symmetric in x and y.
     :param kernel: If not None, use provided kernel to convolve data.  Must be useable with astropy convolution function
     :param sigma_x: If kernel is None, use this to set sigma_x for the 2D gaussian smoothing kernel
     :param sigma_y: If kernel is None, use this to set sigma_y for the 2D gaussian smoothing kernel
+    :param enforce_colinear: Bool. If True, only return new locations if *all* shift vectors are (approx) colinear and of equal length.
 
     :return locs: [row, column] location of the maximum for the convolved image within the region defined by guess and search_radius
     """
     if kernel is None:
         kernel = Gaussian2DKernel(x_stddev=sigma_x, y_stddev=sigma_y)
 
+    guess = guess.astype(np.int)
     locs = np.zeros_like(guess)
     conv_image = convolve(data, kernel)
     fig = plt.figure()
@@ -38,6 +40,24 @@ def findCenter(data, guess, search_radius=20, kernel=None, sigma_x=10, sigma_y=1
         index = np.array(np.unravel_index(np.argmax(region, axis=None), region.shape)).astype(np.int)
         loc = index + g - [search_radius, search_radius]
         locs[i] = loc
+
+    # Should probably move this part of the function to getNewLocs...  But I forgot that fn was defined...
+    if enforce_colinear:
+        # now, if we only want to move when things are colinear, need to define *how* colinear all
+        # points are on avg:
+        shift_vectors = locs - guess
+        dot_products = []
+        for i in range(shift_vectors.shape[0]-1):
+            for j in range(i+1, shift_vectors.shape[0]):
+                dot_products.append(np.sum(shift_vectors[i,:] * shift_vectors[j,:]))
+        dot_products = np.array(dot_products)
+        mean_shift = np.mean(dot_products)
+        std_shift = np.std(dot_products)
+        if mean_shift / std_shift < 5.:
+            return guess
+        else:
+            return guess + np.mean(shift_vectors, axis=0)
+        
     return locs
 
 def getNewLocs(data,info_dict,params):
@@ -104,10 +124,10 @@ def doAperturePhotometry(locs, data, fitsfilename, params):
     return phot_table, uncert
 
 
-def getTptUncert(aper_uncert,charge_uncert,flux,charge,p=0.84):
+def getTptUncert(aper_uncert,charge_uncert,flux,charge):
     # From error propagation, uncert is of the form:
     # sigma Transmission = SQRT( (sigma_CCD/Q_CCD)^2 + (Q_CCD*sigma_PD/Q_PD^2)^2 )
-    uncert = np.sqrt( (aper_uncert/charge)**2. + (flux*charge_uncert/charge)**2. )
+    uncert = np.sqrt( (aper_uncert/charge)**2. + (flux*charge_uncert/charge**2.)**2. )
     return uncert 
 
 
@@ -136,8 +156,9 @@ def makeDiagnosticPlots(data, locs, params, fitsfilename, wavelength, dark_data,
     for circ in circs:
         plt.gca().add_patch(circ)
 
-    plt.colorbar(orientation='horizontal')
-    plt.title(os.path.split(fitsfilename[:-5])[-1])
+    cbar = plt.colorbar(orientation='horizontal')
+    cbar.set_label('Counts', size=16)
+    #plt.title(os.path.split(fitsfilename[:-5])[-1])
     plt.text(625, 50, '%snm' % wavelength, color='w', size=16)
     if not os.path.exists(os.path.join(os.path.dirname(fitsfilename), 'diagnostics')):
         os.makedirs(os.path.join(os.path.dirname(fitsfilename), 'diagnostics'))

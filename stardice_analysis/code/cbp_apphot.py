@@ -66,9 +66,14 @@ def processImage(file_list, params, dot_locs, imps, image_num):
 
     charge = getPhotodiodeCharge(d, expTime)
 
-    #  If we are allowed to move, check to see if we need to offset grid:
-    shifts = {}
-    if params['can_move']:
+    # If we are allowed to move, but don't have initial mount pointings, we have to assume
+    # that the spots are within a radius of search_rad around the current location
+    # use findCenter function to convolve and locate new centers
+    if params['can_move'] and all([imps[k] == -99 for k in imps.keys()]):
+        new_dot_locs = cbph.findCenter(data, dot_locs, search_radius=params['search_rad'], enforce_colinear=True)
+    elif params['can_move']:
+        #  If we are allowed to move, check to see if we need to offset grid:
+        shifts = {}
         new_dot_locs = copy.deepcopy(dot_locs)
         for k in imps.keys():
             if float(d[0].header[k]) != imps[k]:
@@ -92,7 +97,7 @@ def processImage(file_list, params, dot_locs, imps, image_num):
 
     #  =====================================================
     #  Aperture photometry
-    phot_table, uncert = cbph.doAperturePhotometry(new_dot_locs,data,f,params)
+    phot_table, uncert = cbph.doAperturePhotometry(new_dot_locs, data, f, params)
 
     #  =====================================================
     #  Update info dictionary with new photometry + locations
@@ -167,10 +172,10 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix='', sho
             imps[k] = np.float(header_list[0].header[k])
             print(k, imps[k])
     except KeyError:
-        print('No pointing headers found (this usually happens with old fits files. Setting imps to 0')
-        print('Note that if this occurs, you will probably also have to set the \'can_move\' param value to False.')
+        print('No pointing headers found (this usually happens with old fits files). Setting imps to -99.')
+        print('If you\'re using can_move, the photometry code will have to do convolutions, which will be slower.')
         for k in keys:
-            imps[k] = 0.
+            imps[k] = -99
 
     # initialize input dictionary
     info_dict = {}
