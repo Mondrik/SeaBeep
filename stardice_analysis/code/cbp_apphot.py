@@ -235,7 +235,8 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix='', sho
     #  ========================================================
 
     # append nominal CBP system efficiency values to dict
-    info_dict['cbp_transmission']  = cc.get_cbp_transmission(info_dict['wavelengths'])
+    info_dict['cbp_transmission'], info_dict['cbp_transmission_uncert']  = cc.get_cbp_transmission(info_dict['wavelengths'])
+    
 
     #  calculate throughputs
     charge_mask = info_dict['charge'] > params['min_charge']
@@ -249,17 +250,21 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix='', sho
     wavelength = info_dict['wavelengths']
     for i in range(len(info_dict['dot_locs'])):
         info_dict['charge_uncert'] = info_dict['charge']*0.01 + 50. * 1e-11
-        x = info_dict['dot%d' % i]['flux'] / info_dict['charge']
+        x = info_dict['dot%d' % i]['flux'] / info_dict['charge'] / info_dict['cbp_transmission']
         info_dict['dot%d' % i]['raw_tpt'] = np.asarray(x, dtype=np.float)
         info_dict['dot%d' % i]['rel_tpt'] = x/np.max(x[charge_mask])
-        yerr = cbph.getTptUncert(info_dict['dot%d'%i]['aper_uncert'], info_dict['charge_uncert'],
-                                 info_dict['dot%d'%i]['flux'], info_dict['charge'])
-        info_dict['dot%d' % i]['rawtpt_uncert'] = yerr
+        uncert, flux_uncert, pd_uncert, cbpt_uncert = cbph.getTptUncert(
+                                info_dict['dot%d'%i]['aper_uncert'], info_dict['charge_uncert'],
+                                info_dict['dot%d'%i]['flux'], info_dict['charge'],
+                                info_dict['cbp_transmission'], info_dict['cbp_transmission_uncert'])
+        info_dict['dot%d' % i]['rawtpt_uncert'] = uncert
+        info_dict['dot%d' % i]['uncert_flux'] = flux_uncert
+        info_dict['dot%d' % i]['uncert_pd'] = pd_uncert
+        info_dict['dot%d' % i]['uncert_cbpcalib'] = cbpt_uncert
         if make_plots:
-            yerr = np.asarray(yerr)
-            r = x / info_dict['cbp_transmission']
-            r = r / np.max(r)
-            plt.errorbar(wavelength, r ,yerr=yerr/np.max(x[charge_mask]),marker='o',
+            uncert = np.asarray(uncert)
+            r = x / np.max(x)
+            plt.errorbar(wavelength, r ,yerr=uncert/np.max(x[charge_mask]),marker='o',
                          label='%d'%i,ls='',capsize=3,ms=3)
 
     with open(pkl_filename, 'wb') as myfile:

@@ -124,11 +124,14 @@ def doAperturePhotometry(locs, data, fitsfilename, params):
     return phot_table, uncert
 
 
-def getTptUncert(aper_uncert,charge_uncert,flux,charge):
+def getTptUncert(aper_uncert,charge_uncert,flux,charge,cbpt,cbpt_uncert):
     # From error propagation, uncert is of the form:
     # sigma Transmission = SQRT( (sigma_CCD/Q_CCD)^2 + (Q_CCD*sigma_PD/Q_PD^2)^2 )
-    uncert = np.sqrt( (aper_uncert/charge)**2. + (flux*charge_uncert/charge**2.)**2. )
-    return uncert 
+    flux_uncert = aper_uncert/charge/cbpt
+    pd_uncert = flux*charge_uncert/charge**2./cbpt
+    cbpt_uncert = flux*cbpt_uncert/charge/cbpt**2.
+    uncert = np.sqrt( flux_uncert**2. + pd_uncert**2. + cbpt_uncert**2. )
+    return uncert, flux_uncert, pd_uncert, cbpt_uncert
 
 
 def makeDiagnosticPlots(data, locs, params, fitsfilename, wavelength, dark_data, savepath='./'):
