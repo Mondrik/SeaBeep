@@ -46,8 +46,8 @@ dark_image = file_list[-1]
 for i,f in enumerate(light_images):
     print(f)
     d = pft.open(f)
-    spec, n = cbph.reduceSpectra(d['SPECTRA'].data)
-    print('N spectra: {}'.format(n))
+    spec, n, sat_flag = cbph.reduceSpectra(d['SPECTRA'].data, return_saturated_flag=True)
+    print('N spectra: {}'.format(n), sat_flag)
     d.close()
 
     dd = pft.open(dark_image)
@@ -129,7 +129,7 @@ ax1 = plt.subplot2grid((3,2), (2,0), colspan=2, rowspan=1, sharex=ax0)
 xg = np.linspace(pix.min(), pix.max(), 10000)
 ax0.plot(p(pix_masked), counts_masked, 'k.')
 ax0.plot(p(xg), bf_model(xg), '-r')
-ax0.set_ylabel('Counts', size=14)
+ax0.set_ylabel('Counts', size=16)
 ax0.set_xlim(350, 1100)
 ax0.set_ylim(-100, 30000)
 
@@ -140,12 +140,12 @@ resids = calib_lines - p(x_meas)
 ax1.plot(calib_lines, resids, 'k.')
 for i in [1,-1]:
     ax1.axhline(resids.mean()+i*resids.std(), color='r', ls='--', alpha=1)
-ax1.axhline(0, ls='--', color='k', alpha=1)
+ax1.axhline(resids.mean(), ls='--', color='k', alpha=1)
 ax1.set_ylim(-0.75, 0.75)
-ax1.set_xlabel('Wavelength [nm]',size=14)
-ax1.set_ylabel(r'$\lambda_\mathrm{true} - \lambda_\mathrm{fit}$', size=14)
+ax1.set_xlabel('Wavelength [nm]',size=16)
+ax1.set_ylabel(r'$\lambda_\mathrm{true} - \lambda_\mathrm{fit}$ [nm]', size=16)
 
-#plt.tight_layout()
+plt.tight_layout()
 if False:
     plt.savefig('./spectro_calib_plot.png')
 plt.show()

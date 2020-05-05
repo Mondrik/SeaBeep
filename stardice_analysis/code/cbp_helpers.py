@@ -12,6 +12,9 @@ import matplotlib.patches as patch
 import os
 import astropy.io.fits as pft
 from astropy.convolution import convolve, Gaussian2DKernel
+from astropy.stats import sigma_clipped_stats
+from astropy.modeling import fitting
+from astropy.modeling.models import Gaussian1D, Polynomial1D
 
 
 def findCenter(data, guess, search_radius=20, kernel=None, sigma_x=10, sigma_y=10, enforce_colinear=False):
@@ -100,26 +103,32 @@ class MasterBias():
 
 def doAperturePhotometry(locs, data, fitsfilename, params):
     aplocs = []
-    if params['sky_rad_in'] != 0.:
-        do_sky_sub = True
     for i, pair in enumerate(locs):
         aplocs.append(pair[::-1])
 
     apertures = pt.CircularAperture(aplocs, r=params['ap_phot_rad'])
-    if do_sky_sub:
-        sky_apertures = pt.CircularAnnulus(aplocs, r_in=params['sky_rad_in'], r_out=params['sky_rad_out'])
-        sky_table = pt.aperture_photometry(data, sky_apertures, method='subpixel', subpixels=5)
-    phot_table = pt.aperture_photometry(data,apertures,method='subpixel',subpixels=5)
+    sky_apertures = pt.CircularAnnulus(aplocs, r_in=params['sky_rad_in'], r_out=params['sky_rad_out'])
+    sky_masks = sky_apertures.to_mask(method='center')
+    bkg_medians = np.zeros(len(sky_masks))
+    for i,mask in enumerate(sky_masks):
+        sky_data = mask.multiply(data)
+        sky_data_1d = sky_data[mask.data > 0]
+        _, median_sigclip, _ = sigma_clipped_stats(sky_data_1d)
+        bkg_medians[i] = median_sigclip
+    #sky_table = pt.aperture_photometry(data, sky_apertures, method='subpixel', subpixels=5)
+    phot_table = pt.aperture_photometry(data, apertures, method='subpixel', subpixels=5)
+    phot_table['sky_bkg'] = bkg_medians * apertures.area
 
-    area_ratio = apertures.area / sky_apertures.area
+    #area_ratio = apertures.area / sky_apertures.area
     # Signal
-    phot_table['residual_aperture_sum'] = phot_table['aperture_sum'] - sky_table['aperture_sum']*area_ratio
+    #phot_table['residual_aperture_sum'] = phot_table['aperture_sum'] - sky_table['aperture_sum']*area_ratio
+    phot_table['residual_aperture_sum'] = phot_table['aperture_sum'] - phot_table['sky_bkg']
 
     # Noise calculation
     # Noise = Sqrt(Signal + npix*(1 + npix/nbkg)*(sky_per_pix + read_noise**2))
     npix = np.ceil(apertures.area)
     nbkg = np.ceil(sky_apertures.area)
-    sky_per_pix = sky_table['aperture_sum'] / nbkg
+    sky_per_pix = bkg_medians
     uncert = np.sqrt(phot_table['residual_aperture_sum'] + npix*(1 + npix/nbkg)*(sky_per_pix + params['read_noise']**2.))
     return phot_table, uncert
 
@@ -127,14 +136,14 @@ def doAperturePhotometry(locs, data, fitsfilename, params):
 def getTptUncert(aper_uncert,charge_uncert,flux,charge,cbpt,cbpt_uncert):
     # From error propagation, uncert is of the form:
     # sigma Transmission = SQRT( (sigma_CCD/Q_CCD)^2 + (Q_CCD*sigma_PD/Q_PD^2)^2 )
-    flux_uncert = aper_uncert/charge/cbpt
-    pd_uncert = flux*charge_uncert/charge**2./cbpt
-    cbpt_uncert = flux*cbpt_uncert/charge/cbpt**2.
+    flux_uncert = np.sqrt((aper_uncert/charge/cbpt)**2.)
+    pd_uncert = np.sqrt((flux*charge_uncert/charge**2./cbpt)**2.)
+    cbpt_uncert = np.sqrt((flux*cbpt_uncert/charge/cbpt**2.)**2.)
     uncert = np.sqrt( flux_uncert**2. + pd_uncert**2. + cbpt_uncert**2. )
     return uncert, flux_uncert, pd_uncert, cbpt_uncert
 
 
-def makeDiagnosticPlots(data, locs, params, fitsfilename, wavelength, dark_data, savepath='./'):
+def makeDiagnosticPlots(data, locs, params, fitsfilename, wavelength, dark_data=None, savepath='./'):
     #  Plot an image of the entire data frame, with circles drawn on aperture and sky aperture locations
     plt.ioff()
     plt.figure(figsize=(12, 12))
@@ -160,7 +169,9 @@ def makeDiagnosticPlots(data, locs, params, fitsfilename, wavelength, dark_data,
         plt.gca().add_patch(circ)
 
     cbar = plt.colorbar(orientation='horizontal')
-    cbar.set_label('Counts', size=16)
+    cbar.set_label('Counts', size=14)
+    plt.xlabel('X [pix]', size=14)
+    plt.ylabel('Y [pix]', size=14)
     #plt.title(os.path.split(fitsfilename[:-5])[-1])
     plt.text(625, 50, '%snm' % wavelength, color='w', size=16)
     if not os.path.exists(os.path.join(os.path.dirname(fitsfilename), 'diagnostics')):
@@ -169,6 +180,7 @@ def makeDiagnosticPlots(data, locs, params, fitsfilename, wavelength, dark_data,
         os.makedirs(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'images'))
     savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'images'),
                             os.path.split(fitsfilename[:-5])[-1]+'.png')
+    plt.tight_layout()
     plt.savefig(savepath)
     plt.clf()
     plt.close()
@@ -185,32 +197,20 @@ def makeDiagnosticPlots(data, locs, params, fitsfilename, wavelength, dark_data,
     plt.clf()
     plt.close()
 
-    #  Plot a histogram of data - dark over the entire frame
-    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'residuals')):
-        os.makedirs(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'residuals'))
-    savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'residuals'),
-                            os.path.split(fitsfilename[:-5])[-1]+'.png')
-    plt.title('%snm' % wavelength)
-    plt.hist((data - dark_data).flatten(), bins=200, range=[-10000, 65535], histtype='step', color='k')
-    plt.axvline(np.median(data - dark_data), ls='--', color='r')
-    plt.yscale('log')
-    plt.savefig(savepath)
-    plt.clf()
-    plt.close()
-
     #  Plot an image of the dark frame
-    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'darks')):
-        os.makedirs(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'darks'))
-    savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'darks'),
-                            os.path.split(fitsfilename[:-5])[-1]+'.png')
+    if dark_data is not None:
+        if not os.path.exists(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'darks')):
+            os.makedirs(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'darks'))
+        savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'darks'),
+                                os.path.split(fitsfilename[:-5])[-1]+'.png')
 
 
-    plt.title('%snm' % wavelength)
-    vmin, vmax = np.percentile(dark_data, [10,90])
-    plt.imshow(dark_data, origin='lower', vmin=vmin, vmax=vmax)
-    plt.savefig(savepath)
-    plt.clf()
-    plt.close()
+        plt.title('%snm' % wavelength)
+        vmin, vmax = np.percentile(dark_data, [10,90])
+        plt.imshow(dark_data, origin='lower', vmin=vmin, vmax=vmax)
+        plt.savefig(savepath)
+        plt.clf()
+        plt.close()
 
 
 def makeDotHistograms(data, locs, box_size, fitsfilename, wavelength, savepath='./'):
@@ -271,19 +271,64 @@ def makeDotImages(data, locs, box_size, fitsfilename, wavelength, savepath='./')
     plt.close()
 
 
-def reduceSpectra(specs):
+def reduceSpectra(specs, return_saturated_flag=False):
     wavelengths = specs['wl']
     counts = np.zeros_like(wavelengths)
     n_specs = 0
+    has_saturated_values = False
     while True:
         try:
+            if any(specs['flux%d'%n_specs] == 65535):
+                has_saturated_values = True
             counts += specs['flux%d'%n_specs] #- np.median(specs['flux%d'%i])
             n_specs += 1
         except:
             break
     collapsed_spec = np.column_stack((wavelengths, counts))
-    # TODO: Add code to centroid spectrum
-    return collapsed_spec, n_specs
+    if return_saturated_flag:
+        return collapsed_spec, n_specs, has_saturated_values
+    else:
+        return collapsed_spec, n_specs
+
+def getOutputWavelength(requested_wavelength, spectrum, pix2wave_fit_file,
+                        wavelength_adjust_file, saturated_flag, fit_region_size=20):
+    if saturated_flag:
+        adjust_fit = np.loadtxt(wavelength_adjust_file)
+        wave_adjust = np.polynomial.chebyshev.Chebyshev(adjust_fit)
+        return requested_wavelength + wave_adjust(requested_wavelength), None
+
+    pix2wave_fit = np.loadtxt(pix2wave_fit_file)
+    pix2wave = np.polynomial.chebyshev.Chebyshev(pix2wave_fit)
+    pix = np.arange(0, len(spectrum[:,1]), 1)
+
+    center_pix = np.argmax(spectrum[:,1])
+
+    mask_condition = np.abs(pix - pix[center_pix]) > fit_region_size
+    pix_masked = np.ma.masked_where(mask_condition, pix)
+    counts_masked = np.ma.masked_where(mask_condition, spectrum[:,1])
+    mask_center = np.argmax(counts_masked)
+
+    fitter = fitting.LevMarLSQFitter()
+    offset = Polynomial1D(degree=0)
+    g = Gaussian1D(mean=pix_masked[center_pix], amplitude=counts_masked.max(), stddev=4.)
+    model = g + offset
+
+
+    #plt.figure()
+    #plt.plot(pix_masked, counts_masked, 'k.')
+    #plt.axvline(center_pix)
+
+    bf_model = fitter(model, pix, spectrum[:,1])
+
+    #plt.plot(pix, bf_model(pix), '-r')
+    #plt.show(block=True)
+
+    model_center_pix = bf_model.mean_0
+    return pix2wave(model_center_pix), bf_model
+
+    
+    
+    
 
 
 def filterCosmics(data):

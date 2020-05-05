@@ -10,7 +10,7 @@ import cbp_calib as cc
 import multiprocessing as mp
 from functools import partial
 import copy
-
+from scipy.interpolate import UnivariateSpline
 
 def getStandardParams():
     params = {}
@@ -22,14 +22,17 @@ def getStandardParams():
     params['gain'] = 1.
     params['min_charge'] = 0.5E-7
     params['read_noise'] = 3.
+    params['mask_crs'] = False
+    params['subtract_dark'] = True
     return params
 
-def getDark(filename, master_bias=None):
+def getDark(filename, params, master_bias=None):
     if master_bias is None:
         master_bias = cbph.MasterBias()
     dark = pft.open(filename)
+    dark_data = dark[0].data
     dark_bias = master_bias(dark[0])
-    return dark[0].data.astype(np.float) - dark_bias
+    return dark_data.astype(np.float) - dark_bias
 
 def getPhotodiodeCharge(fits_header_list, expTime, phd_keyword='PHOTOCOUNT', bkg_subtract=True):
     phd = fits_header_list[phd_keyword].data['phd']
@@ -49,8 +52,6 @@ def processImage(file_list, params, dot_locs, imps, image_num):
     master_bias = cbph.MasterBias()
 
     filename = file_list[i]
-    dark_filename = file_list[i-1]
-    dark_data = getDark(dark_filename)
 
     d = pft.open(f)
     wavelength = np.float(d[0].header['laserwavelength'])
@@ -61,7 +62,15 @@ def processImage(file_list, params, dot_locs, imps, image_num):
     print(os.path.split(f)[-1], wavelength, '{:.0f} of {:.0f}'.format((i+1)/2, len(file_list)/2))
     expTime = np.float(d[0].header['EXPTIME'])
     bias = master_bias(d[0])
-    data = d[0].data.astype(np.float) - bias - dark_data
+    if params['subtract_dark']:
+        dark_filename = file_list[i-1]
+        dark_data = getDark(dark_filename, params)
+        data = d[0].data.astype(np.float) - bias - dark_data
+    else:
+        dark_data = None
+        data = d[0].data
+        data = d[0].data.astype(np.float) - bias
+
     data = data * params['gain']
 
     charge = getPhotodiodeCharge(d, expTime)
@@ -91,9 +100,10 @@ def processImage(file_list, params, dot_locs, imps, image_num):
     #  ====================================================
     #  Process Spectra
     if params['process_spectra']:
-        spectrum, _ = cbph.reduceSpectra(d['SPECTRA'].data)
+        spectrum, n_spectra, is_saturated = cbph.reduceSpectra(d['SPECTRA'].data, return_saturated_flag=True)
     else:
         spectrum = None
+        n_spectra = 0.
 
     #  =====================================================
     #  Aperture photometry
@@ -111,7 +121,7 @@ def processImage(file_list, params, dot_locs, imps, image_num):
     if params['process_spectra']:
         cbph.makeSpectrumPlot(wavelength, spectrum[:,0], spectrum[:,1], f)
 
-    return i, f, wavelength, filt, expTime, charge, spectrum, flux, raw_flux, uncert, new_dot_locs
+    return i, f, wavelength, filt, expTime, charge, spectrum, n_spectra, is_saturated, flux, raw_flux, uncert, new_dot_locs
 
 
 def processCBP(params=None, fits_file_path=None, make_plots=True, suffix='', show_final=True, no_ap_phot=False):
@@ -200,10 +210,18 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix='', sho
     info_dict['dark_filename'] = np.zeros(n_images).astype(np.str)
     info_dict['filter'] = np.zeros(n_images).astype(np.int)
     info_dict['wavelengths'] = np.zeros(n_images).astype(np.float)
+    info_dict['wavelengths_calibrated'] = np.zeros(n_images).astype(np.float)
     info_dict['exp_times'] = np.zeros(n_images).astype(np.float)
     info_dict['charge'] = np.zeros(n_images).astype(np.float)
     if params['process_spectra']:
         info_dict['spectrum'] = np.zeros((n_images,994,2)).astype(np.float)
+        info_dict['n_spectra'] = np.zeros(n_images).astype(np.float)
+        info_dict['spec_saturated'] = np.zeros(n_images).astype(np.bool)
+
+    # Add the correction fit for correcting output wavelength of laser
+    # the correction corresponds to the output of the chebfit() numpy function
+    # and lambda_true = laser_wavelength + correction(laser_wavelength)
+    info_dict['wavelength_adjust_fit'] = np.loadtxt(params['wavelength_adjust_file'])
 
     #  slicing selects light images only
     #  then, flist[fnum-1] is the dark for flist[fnum]
@@ -215,15 +233,19 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix='', sho
         with mp.Pool() as pool:
             mapfunc = partial(processImage, file_list, params, dot_locs, imps)
             res = pool.map(mapfunc, fnum)
-        for fnum, filename, wavelength, filt, expTime, charge, spectrum, flux, raw_flux, aper_uncert, ndl in res:
+        for fnum, filename, wavelength, filt, expTime, charge, spectrum, n_spectra, is_saturated, flux, raw_flux, aper_uncert, ndl in res:
             i = np.int((fnum-1)/2) # image number for a given file number
             info_dict['filename'][i] = filename
             info_dict['wavelengths'][i] = wavelength
+            act_wave = cbph.getOutputWavelength(wavelength, spectrum, params['pix2wave_fit_file'], params['wavelength_adjust_file'], is_saturated)
+            info_dict['wavelengths_calibrated'][i] = act_wave[0]
             info_dict['filter'][i] = filt
             info_dict['exp_times'][i] = expTime
             info_dict['charge'][i] = charge
             if params['process_spectra']:
                 info_dict['spectrum'][i, :, :] = spectrum
+                info_dict['n_spectra'][i] = n_spectra
+                info_dict['spec_saturated'][i] = is_saturated
             for s in range(len(dot_locs)):
                 info_dict['dot%d' % s]['flux'][i] = flux[s]
                 info_dict['dot%d' % s]['raw_flux'][i] = raw_flux[s]
@@ -233,9 +255,23 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix='', sho
 
     #  begin post-processing of photometry
     #  ========================================================
+    # make corrected wavelength vector
+    adj = np.polynomial.chebyshev.Chebyshev(info_dict['wavelength_adjust_fit'])
+    info_dict['wavelengths_corrected'] = info_dict['wavelengths'] + adj(info_dict['wavelengths'])
+
+    s = np.argsort(info_dict['wavelengths'])
+    sat = info_dict['spec_saturated'][s]
+    unique_wavelengths = np.array(list(set(info_dict['wavelengths'][s][~sat])))
+    unique_wavelengths = np.sort(unique_wavelengths)
+    print(unique_wavelengths)
+    avg_output = np.zeros_like(unique_wavelengths)
+    for i,w in enumerate(unique_wavelengths):
+        avg_output[i] = np.mean(info_dict['wavelengths_calibrated'][s][~sat][info_dict['wavelengths'][s][~sat]==w])
+    interp_spline = UnivariateSpline(unique_wavelengths, avg_output, s=0, k=2)
+    info_dict['wavelengths_splinefit'] = interp_spline(info_dict['wavelengths'])
 
     # append nominal CBP system efficiency values to dict
-    info_dict['cbp_transmission'], info_dict['cbp_transmission_uncert']  = cc.get_cbp_transmission(info_dict['wavelengths'])
+    info_dict['cbp_transmission'], info_dict['cbp_transmission_uncert']  = cc.get_cbp_transmission(info_dict['wavelengths_splinefit'])
     
 
     #  calculate throughputs
@@ -247,7 +283,7 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix='', sho
 
     if make_plots:
         plt.figure(figsize=(24, 12))
-    wavelength = info_dict['wavelengths']
+    wavelength = info_dict['wavelengths_splinefit']
     for i in range(len(info_dict['dot_locs'])):
         info_dict['charge_uncert'] = info_dict['charge']*0.01 + 50. * 1e-11
         x = info_dict['dot%d' % i]['flux'] / info_dict['charge'] / info_dict['cbp_transmission']
@@ -263,8 +299,8 @@ def processCBP(params=None, fits_file_path=None, make_plots=True, suffix='', sho
         info_dict['dot%d' % i]['uncert_cbpcalib'] = cbpt_uncert
         if make_plots:
             uncert = np.asarray(uncert)
-            r = x / np.max(x)
-            plt.errorbar(wavelength, r ,yerr=uncert/np.max(x[charge_mask]),marker='o',
+            r = x / np.nanmax(x)
+            plt.errorbar(wavelength, r ,yerr=uncert/np.nanmax(x[charge_mask]),marker='o',
                          label='%d'%i,ls='',capsize=3,ms=3)
 
     with open(pkl_filename, 'wb') as myfile:
