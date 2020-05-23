@@ -155,7 +155,7 @@ class CbpScan():
         # pool.map returns a list of "ExposureResults" objects
         # which can be used to load data into the attributes defined in 
         # the __init__ call
-        with mp.Pool() as pool:
+        with mp.Pool(processes=self.config.n_cpus) as pool:
             mapfunc = partial(process_exposure, self.config, self.pim)
             results = pool.map(mapfunc, self.image_numbers)
 
@@ -191,9 +191,9 @@ class CbpScan():
         return # For now... TODO: Make sure this is all we want to do in run
 
     def _fit_wavelength_interp_spline(self):
-        unique_wavelengths = np.array(list(set(self.laser_wavelength)))
-        unique_wavelengths = np.sort(unique_wavelengths)
         sat = self.spec_saturated
+        unique_wavelengths = np.array(list(set(self.laser_wavelength[~sat])))
+        unique_wavelengths = np.sort(unique_wavelengths)
         avg_output = np.zeros_like(unique_wavelengths)
         # Find the average MEASURED wavelength emitted by the laser at each requested wavelength
         # for exposures whose spectrograph data DOES NOT contain saturated values

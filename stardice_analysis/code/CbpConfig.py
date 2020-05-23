@@ -9,6 +9,7 @@ Nick Mondrik, May 2020
 
 import pickle
 import logging
+import os
 
 
 
@@ -37,6 +38,7 @@ class CBPConfig():
         self.gain = 1.                           # gain in ADU/e-        
 
         # Pre-processing configuration parameters
+        self.n_cpus = os.cpu_count()             # How many CPUs do we want to dedicate to this?
         self.subtract_dark = True                # Do we subtract dark frames?
         self.spots_can_move = True               # Do we allow spots to move (as a grid)?
         self.enforce_colinear = True             # If dots can move, do they have to move as a grid?
