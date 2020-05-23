@@ -15,9 +15,10 @@ from astropy.convolution import convolve, Gaussian2DKernel
 from astropy.stats import sigma_clipped_stats
 from astropy.modeling import fitting
 from astropy.modeling.models import Gaussian1D, Polynomial1D
+import logging
 
 
-def findCenter(data, guess, search_radius=20, kernel=None, sigma_x=10, sigma_y=10, enforce_colinear=False):
+def find_center(data, guess, search_radius=20, kernel=None, sigma_x=10, sigma_y=10, enforce_colinear=False):
     """
     Given a set of initial guesses for the locations of spots, convolve the image with a kernel and search the result for a peak within a specified radius
 
@@ -37,14 +38,12 @@ def findCenter(data, guess, search_radius=20, kernel=None, sigma_x=10, sigma_y=1
     guess = guess.astype(np.int)
     locs = np.zeros_like(guess)
     conv_image = convolve(data, kernel)
-    fig = plt.figure()
     for i,g in enumerate(guess):
         region = conv_image[g[0]-search_radius:g[0]+search_radius+1, g[1]-search_radius:g[1]+search_radius+1]
         index = np.array(np.unravel_index(np.argmax(region, axis=None), region.shape)).astype(np.int)
         loc = index + g - [search_radius, search_radius]
         locs[i] = loc
 
-    # Should probably move this part of the function to getNewLocs...  But I forgot that fn was defined...
     if enforce_colinear:
         # now, if we only want to move when things are colinear, need to define *how* colinear all
         # points are on avg:
@@ -63,23 +62,11 @@ def findCenter(data, guess, search_radius=20, kernel=None, sigma_x=10, sigma_y=1
         
     return locs
 
-def getNewLocs(data,info_dict,params):
-    if params['can_move']:
-        # We allow all spots to move, but must move as a fixed grid -- therefore
-        # only move by the median displacement vector from current positions
-        new_locs = []
-        for i, pair in enumerate(info_dict['dot_locs']):
-            myrow, mycol = findCenter(data, pair, search_size=params['search_rad'])
-            new_locs.append([myrow,mycol])
-        new_locs = np.array(new_locs)
-        vec = new_locs - info_dict['dot_locs']
-        vec = np.rint(np.median(vec, axis=0))
-        new_locs = info_dict['dot_locs'] + vec
-    else:
-        new_locs = info_dict['dot_locs']
-    return new_locs
 
 class MasterBias():
+    """
+    Class that contains code to generate a bias frame from a given StarDICE exposure
+    """
     def __init__(self, filename='../data/master_bias.fits'):
         self.header_key = 'IMREDMB'
         self.filename = filename
@@ -101,39 +88,40 @@ class MasterBias():
             else:
                 raise KeyError('REG_POWR missing in image header')
 
-def doAperturePhotometry(locs, data, fitsfilename, params):
+def doAperturePhotometry(locs, data, config):
     aplocs = []
     for i, pair in enumerate(locs):
         aplocs.append(pair[::-1])
 
-    apertures = pt.CircularAperture(aplocs, r=params['ap_phot_rad'])
-    sky_apertures = pt.CircularAnnulus(aplocs, r_in=params['sky_rad_in'], r_out=params['sky_rad_out'])
+    apertures = pt.CircularAperture(aplocs, r=config.ap_phot_rad)
+
+    # Estimate sky background as the (sigma clipped) median value of the pixels in the sky annulus
+    sky_apertures = pt.CircularAnnulus(aplocs, r_in=config.sky_rad_in, r_out=config.sky_rad_out)
     sky_masks = sky_apertures.to_mask(method='center')
-    bkg_medians = np.zeros(len(sky_masks))
+    sky_per_pix = np.zeros(len(sky_masks))
     for i,mask in enumerate(sky_masks):
         sky_data = mask.multiply(data)
         sky_data_1d = sky_data[mask.data > 0]
         _, median_sigclip, _ = sigma_clipped_stats(sky_data_1d)
-        bkg_medians[i] = median_sigclip
-    #sky_table = pt.aperture_photometry(data, sky_apertures, method='subpixel', subpixels=5)
+        sky_per_pix[i] = median_sigclip
     phot_table = pt.aperture_photometry(data, apertures, method='subpixel', subpixels=5)
-    phot_table['sky_bkg'] = bkg_medians * apertures.area
+    phot_table['sky_bkg'] = sky_per_pix * apertures.area
 
-    #area_ratio = apertures.area / sky_apertures.area
-    # Signal
-    #phot_table['residual_aperture_sum'] = phot_table['aperture_sum'] - sky_table['aperture_sum']*area_ratio
     phot_table['residual_aperture_sum'] = phot_table['aperture_sum'] - phot_table['sky_bkg']
 
     # Noise calculation
     # Noise = Sqrt(Signal + npix*(1 + npix/nbkg)*(sky_per_pix + read_noise**2))
+    # Read noise**2 is multiplied by 2, since we are doing photometry on a diff image
     npix = np.ceil(apertures.area)
     nbkg = np.ceil(sky_apertures.area)
-    sky_per_pix = bkg_medians
-    uncert = np.sqrt(phot_table['residual_aperture_sum'] + npix*(1 + npix/nbkg)*(sky_per_pix + params['read_noise']**2.))
+    uncert = np.sqrt(phot_table['residual_aperture_sum'] + npix*(1 + npix/nbkg)*(sky_per_pix + 2.*config.read_noise**2.))
+    ras = phot_table['residual_aperture_sum']
+    with np.printoptions(precision=3, suppress=True):
+        logging.debug(f'NPIX: {npix:.0f} NBKG_PIX: {nbkg:.0f}\nSKY PER PIX: {sky_per_pix}\n{ras}')
     return phot_table, uncert
 
 
-def getTptUncert(aper_uncert,charge_uncert,flux,charge,cbpt,cbpt_uncert):
+def get_throughput_uncert(aper_uncert,charge_uncert,flux,charge,cbpt,cbpt_uncert):
     # From error propagation, uncert is of the form:
     # sigma Transmission = SQRT( (sigma_CCD/Q_CCD)^2 + (Q_CCD*sigma_PD/Q_PD^2)^2 )
     flux_uncert = np.sqrt((aper_uncert/charge/cbpt)**2.)
@@ -212,66 +200,14 @@ def makeDiagnosticPlots(data, locs, params, fitsfilename, wavelength, dark_data=
         plt.clf()
         plt.close()
 
-
-def makeDotHistograms(data, locs, box_size, fitsfilename, wavelength, savepath='./'):
-    locs = np.asarray(locs,dtype=np.int)
-    plt.ioff()
-    plt.figure(figsize=(12,12))
-    for i,loc in enumerate(locs):
-        rmin = loc[0]-box_size
-        rmax = loc[0]+box_size
-        cmin = loc[1]-box_size
-        cmax = loc[1]+box_size
-        region = data[rmin:rmax,cmin:cmax].flatten()
-        plt.hist(region,bins=20,range=[-200,65535],histtype='step',label='%d'%i)
-    plt.legend(ncol=2)
-    plt.title('%snm' % wavelength)
-    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'diagnostics')):
-        os.makedirs(os.path.join(os.path.dirname(fitsfilename),'diagnostics'))
-    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'diagnostics','local_histograms')):
-        os.makedirs(os.path.join(os.path.dirname(fitsfilename),'diagnostics','local_histograms'))
-    savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename),'diagnostics','local_histograms'),
-                            os.path.split(fitsfilename[:-5])[-1]+'.png')
-    plt.yscale('log')
-    plt.savefig(savepath)
-    plt.clf()
-    plt.close()
-
-
-def makeDotImages(data, locs, box_size, fitsfilename, wavelength, savepath='./'):
-    plt.ioff()
-    locs = np.asarray(locs,dtype=np.int)
-    ncolplts = 3
-    nrowplts = np.ceil(len(locs)/ncolplts).astype(np.int)
-    fig,ax = plt.subplots(nrowplts,ncolplts)
-    fig.set_size_inches((16,8))
-    ax1 = fig.add_subplot(111,frameon=False)
-    plt.tick_params(labelcolor='none', top='off', bottom='off', left='off', right='off')
-    plt.grid(False)
-    plt.title('%snm'%wavelength)
-    for i,loc in enumerate(locs):
-        row = np.floor(np.float(i)/np.float(ncolplts)).astype(np.int)
-        col = i % ncolplts
-        region = data[loc[0]-box_size:loc[0]+box_size,loc[1]-box_size:loc[1]+box_size]
-        img = ax[row,col].imshow(region,vmin=-200,vmax=200,origin='lower')
-        ax[row,col].text(5,5,'%d' % i,
-                 color='w',size=16)
-    while col < ncolplts:
-        ax[row,col].axis('off')
-        col += 1
-    fig.colorbar(img, ax=ax.ravel().tolist())
-    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'diagnostics')):
-        os.makedirs(os.path.join(os.path.dirname(fitsfilename),'diagnostics'))
-    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'diagnostics','local_images')):
-        os.makedirs(os.path.join(os.path.dirname(fitsfilename),'diagnostics','local_images'))
-    savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename),'diagnostics','local_images'),
-                            os.path.split(fitsfilename[:-5])[-1]+'.png')
-    plt.savefig(savepath)
-    plt.clf()
-    plt.close()
-
-
-def reduceSpectra(specs, return_saturated_flag=False):
+def reduce_spectra(specs):
+    """
+    Stacks all spectra from to provided np record array to form a co-added spectrum
+    This record array has one key labeled "wl" (wavelength), and an arbitrary number
+    of keys like "fluxXX" where XX is some integer.
+    If any are saturated (=65535), we set the saturation flag to true, so we know to
+    exclude these from fitting later.
+    """
     wavelengths = specs['wl']
     counts = np.zeros_like(wavelengths)
     n_specs = 0
@@ -280,30 +216,24 @@ def reduceSpectra(specs, return_saturated_flag=False):
         try:
             if any(specs['flux%d'%n_specs] == 65535):
                 has_saturated_values = True
-            counts += specs['flux%d'%n_specs] #- np.median(specs['flux%d'%i])
+            counts += specs['flux%d'%n_specs]
             n_specs += 1
         except:
             break
     collapsed_spec = np.column_stack((wavelengths, counts))
-    if return_saturated_flag:
-        return collapsed_spec, n_specs, has_saturated_values
-    else:
-        return collapsed_spec, n_specs
 
-def getOutputWavelength(requested_wavelength, spectrum, pix2wave_fit_file,
-                        wavelength_adjust_file, saturated_flag, fit_region_size=20):
-    if saturated_flag:
-        adjust_fit = np.loadtxt(wavelength_adjust_file)
-        wave_adjust = np.polynomial.chebyshev.Chebyshev(adjust_fit)
-        return requested_wavelength + wave_adjust(requested_wavelength), None
+    return collapsed_spec, n_specs, has_saturated_values
 
-    pix2wave_fit = np.loadtxt(pix2wave_fit_file)
+def get_output_wavelength(config, spectrum):
+
+    pix2wave_fit = np.loadtxt(config.pix2wave_fit_file)
     pix2wave = np.polynomial.chebyshev.Chebyshev(pix2wave_fit)
+    
     pix = np.arange(0, len(spectrum[:,1]), 1)
-
+    # Starting pixel is the peak of the co-added spectrum
     center_pix = np.argmax(spectrum[:,1])
 
-    mask_condition = np.abs(pix - pix[center_pix]) > fit_region_size
+    mask_condition = np.abs(pix - pix[center_pix]) > config.spec_fit_region_size
     pix_masked = np.ma.masked_where(mask_condition, pix)
     counts_masked = np.ma.masked_where(mask_condition, spectrum[:,1])
     mask_center = np.argmax(counts_masked)
@@ -312,91 +242,11 @@ def getOutputWavelength(requested_wavelength, spectrum, pix2wave_fit_file,
     offset = Polynomial1D(degree=0)
     g = Gaussian1D(mean=pix_masked[center_pix], amplitude=counts_masked.max(), stddev=4.)
     model = g + offset
-
-
-    #plt.figure()
-    #plt.plot(pix_masked, counts_masked, 'k.')
-    #plt.axvline(center_pix)
-
     bf_model = fitter(model, pix, spectrum[:,1])
-
-    #plt.plot(pix, bf_model(pix), '-r')
-    #plt.show(block=True)
-
     model_center_pix = bf_model.mean_0
     return pix2wave(model_center_pix), bf_model
 
     
-    
-    
-
-
-def filterCosmics(data):
-    i  = 0
-    count = 1000000
-    CosmicImage = np.zeros_like(data)
-    total = 0
-    sigma = np.std(data[data<1.2*np.median(data)])
-    mean = np.median(data[data<1.2*np.median(data)])
-    seeing = 5.
-    while ((count) and (i <5)):
-        count = LaplacianFilter(sigma, mean, seeing, data, CosmicImage)
-        total+=count
-        i+=1
-    print(" Number of cosmics found ", count)
-#    plt.imshow(CosmicImage,origin='lower')
-#    plt.show()
-    return CosmicImage
-
-def LaplacianFilter(Sigma, Mean, seeing, data, CosmicImage):
-#//Laplacian filter
-#/*!Cuts (based on the article -> astro-ph/0108003):
-#  -cut_lap : the laplacian operator increases the noise by a factor of
-#  "sqrt(1.25)"
-#
-#  -cut_f : 2*sigma(med), where sigma(med) is the variance of the
-#  sky's median calculated in a box (3*3), here.
-#  (sigma(med) = sigma(sky)*1.22/sqrt(n); n = size of the box)
-#
-#  -cut_lf : calculated from the article.
-#  Factor 2.35 -> to have the seeing in arc sec */
-#  Adapted from code by A. Guyonnet
-    xmax    = len(data)-1
-    ymax    = len(data[0])-1
-    l       = 0.0
-    f       = 0.0
-    med     = 0.0
-    cut     = 4 * Sigma
-    cut_lap = cut * np.sqrt(1.25)
-    cut_f   = 2 * (Sigma*1.22/3)
-    cut_lf  = 2./(seeing*2.35-1)
-    count   = 0
-    for j in range(1, ymax):
-        for i in range(1, xmax):
-            #Calculation of the laplacian and the median only for pixels > 3 sigma
-            if (data[i,j] > cut+Mean ):
-                l   = data[i,j] - 0.25*(data[i-1,j]   + data[i+1,j]
-                                        + data[i,j-1] + data[i,j+1])
-                med = np.median(data[i-1:i+2,j-1:j+2])
-                f   = med - Mean  #f is invariant by addition of a constant
-                #Construction of a cosmic image
-                if((l>cut_lap) and ((f<cut_f) or ((l/f)>cut_lf))):
-                   CosmicImage[i,j] = 1
-                   data[i,j]        = med
-                   count           += 1
-            # Image is set to 0 by default
-    #CosmicImage.Simplify(0.5)
-    return count
-
-def makeMeanAsciiFile(waves,tpts,charge,fname):
-    unique_waves = np.array(list(set(waves)))
-    out = np.zeros_like(unique_waves)
-    char = np.zeros_like(unique_waves)
-    for i,w in enumerate(unique_waves):
-        j = np.where(waves==w)[0]
-        out[i] = np.mean(tpts[j])
-        char[i] = np.mean(charge[j])
-    np.savetxt(fname,np.column_stack((unique_waves,out,char)),header='WAVE RELTPT CHARGE')
 
 def makeSpectrumPlot(nominalWave, wavelengths, counts, fitsfilename):
     plt.ioff()

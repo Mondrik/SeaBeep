@@ -28,12 +28,11 @@ if True:
         params['mount_derivatives'] = derivs
 params['process_spectra'] = True
 
-#phot_rads = [10, 20, 25, 30, 35, 40, 50]#, 55, 60, 65]
-#phot_rads = [50]#, 55, 60, 65]
+#phot_rads = [20, 25, 30, 35, 40, 50, 55, 60, 65]
+phot_rads = [30]
+#phot_rads = [45]
 
-#phot_rads = [40, 45, 50, 55, 60, 65]
 
-phot_rads = [45]
 for pr in phot_rads:
     params['ap_phot_rad'] = pr
     params['sky_rad_in'] = 50
@@ -44,4 +43,4 @@ for pr in phot_rads:
     params['read_noise'] = 16.
     params['can_move'] = True
     info_dict = cap.processCBP(fits_file_path='/home/mondrik/CBP/paris_data/combination_scan',
-                   params=params, suffix='_%d_NIST_uncerts'%pr, make_plots=True, show_final=True)
+                   params=params, suffix='_%d_incRN'%pr, make_plots=True, show_final=True)

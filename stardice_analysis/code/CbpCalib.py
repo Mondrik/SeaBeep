@@ -4,6 +4,11 @@ import scipy.signal as signal
 
 
 def get_cbp_transmission(wl_grid, native=False, uncert_region_size=10):
+    """
+    Return the calibration factor of the CBP over some given wavelength grid.
+    If native=True, it will return the CBP's transmission on the wavelength grid
+    defined in the calibration files, and ignore the user supplied wl_grid
+    """
 
     # Load relevant test data from NIST
     telcbp = np.loadtxt('../data/tel-cbp.txt')
@@ -32,7 +37,8 @@ def get_cbp_transmission(wl_grid, native=False, uncert_region_size=10):
     raw_wpa_interp = np.interp(wl, telts04[:,0], telts04[:,1])
     raw_wpa = tcbp/raw_wpa_interp/ts04aperw[:,1]
 
-    # Convert from W/A to Quantum Efficiency
+    # Convert from W/A to dimensionless quantity
+    # Using E=hc/lambda and assume 1 e-/photon
     h = 6.62607e-34 #  m^2 kg / s
     c = 2.99792e8 #  m / s
     echarge = 1.602177e-19 #  Coulombs
