@@ -159,7 +159,7 @@ class CbpScan():
             mapfunc = partial(process_exposure, self.config, self.pim)
             results = pool.map(mapfunc, self.image_numbers)
 
-        exp_keys = ['laser_wavelength', 'file_name', 'exp_time', 'filter', 'charge', 'spectrum',
+        exp_keys = ['laser_wavelength', 'file_name', 'exp_time', 'filter', 'charge', 'charge_uncert', 'spectrum',
                     'n_spectra', 'spec_saturated']
         dot_keys = ['flux', 'raw_flux', 'flux_uncert', 'dot_loc']
         

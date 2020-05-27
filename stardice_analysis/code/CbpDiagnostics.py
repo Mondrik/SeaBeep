@@ -39,7 +39,7 @@ def make_images(config, data, results, dark_data):
     circs = []
     for loc in locs:
         circ = patch.Circle(xy=loc[::-1],
-                            radius=config.ap_phot_rad, ec='white', fc=None, lw=2)
+                            radius=config.ap_phot_rad, ec='white', fill=False, lw=2)
         circs.append(circ)
     for circ in circs:
         plt.gca().add_patch(circ)

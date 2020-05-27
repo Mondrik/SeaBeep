@@ -102,6 +102,7 @@ def process_exposure(config, proc_image_metadata, image_num):
     data *= config.gain
 
     results.charge = get_photodiode_charge(d, exp_time, config)
+    results.charge_uncert = get_photodiode_charge_uncert(results.charge)
 
     # If we are allowed to move, but don't have initial mount pointings, we have to assume
     # that the spots are within a radius of spot_search_rad around the current location
@@ -166,4 +167,8 @@ def get_photodiode_charge(fits_header_list, exp_time, config):
         bkg_charge = 0.
     return np.max(phd) - bkg_charge
 
-
+def get_photodiode_charge_uncert(charge):
+    """
+    Given a measured charge level in Coulombs, return the Keithley-specified uncertainty
+    """
+    return 0.01*charge + 50.*1e-11
