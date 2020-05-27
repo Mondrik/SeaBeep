@@ -54,5 +54,16 @@ class CBPConfig():
         self.spec_fit_region_size = 20           # Size of region around peak to use in wavelength extraction
         self.wavelength_interp_spline_deg = 2    # Degree of wavelength interpolating spline
 
+        # Post-processing configuration parameters
+        # For sorting, if it is set to None, no sorting is performed.  The sorting key *must*
+        # be a key of the CbpScan.__dict__ -- i.e., you cannot sort of a Dot.__dict__ key.
+        self.results_sorting_key = 'laser_wavelength' # What dict key do we want to sort results by?
+
+        # Diagnostic plotting configuration options
+        self.make_diagnostics = False            # Do we make diagnostic plots?
+        self.label_size = 18                     # Size of axis labels/text
+        self.whole_frame_minmax = [-100,100]     # Colorscale values for whole CCD image
+        self.plot_pix2wave_spectrum = True       # Enable plotting of pix2wave based spectrum
+
         
     

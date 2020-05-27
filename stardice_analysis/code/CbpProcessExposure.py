@@ -11,6 +11,8 @@ import numpy as np
 import astropy.io.fits as pft
 import os
 import CbpHelpers as cbph
+import CbpDiagnostics as cbpd
+import copy
 import logging
 
 
@@ -71,6 +73,15 @@ def process_exposure(config, proc_image_metadata, image_num):
     except ValueError:
         filt = np.int(-99)
 
+    # Fill in other results items that will be needed
+    results.image_number = i
+    results.file_name = f
+    results.laser_wavelength = wavelength
+    results.filter = filt
+    results.exp_time = exp_time
+
+
+
     log_string = '%s %7.2f nm FILE: %d of %d' % (os.path.split(f)[-1], wavelength, (i+1)/2, len(pim['file_list'])/2) 
     logging.info(log_string)
 
@@ -114,14 +125,18 @@ def process_exposure(config, proc_image_metadata, image_num):
     else:
         new_dot_loc = pim['dot_loc']
 
+    results.dot_loc = new_dot_loc
+
     # Process Spectra
     # If process_spectra is False, results.<<spectra stuff>> all default to None
     if config.process_spectra:
         results.spectrum, results.n_spectra, results.spec_saturated = cbph.reduce_spectra(d[config.fits_spectrum_extname].data)
+        if config.make_diagnostics:
+            cbpd.make_spectrum_plot(config, results)
 
     #  =====================================================
     #  Aperture photometry
-    phot_table, uncert = cbph.doAperturePhotometry(new_dot_loc, data, config)
+    phot_table, uncert = cbph.do_aperture_photometry(config, data, results.dot_loc)
 
     #  =====================================================
     results.flux = phot_table['residual_aperture_sum']
@@ -129,22 +144,9 @@ def process_exposure(config, proc_image_metadata, image_num):
     results.flux_uncert = uncert
 
     #  ====================================================
-    #  PLOTTING
-    #cbph.makeDiagnosticPlots(data, new_dot_loc, config, f, wavelength, dark_data)
-    #cbph.makeDotHistograms(data, new_dot_loc, config.ap_phot_rad, f, wavelength)
-    #cbph.makeDotImages(data, new_dot_loc, config.ap_phot_rad, f, wavelength)
-    #if config.process_spectra:
-    #    cbph.makeSpectrumPlot(wavelength, spectrum[:,0], spectrum[:,1], f)
+    if config.make_diagnostics:
+        cbpd.make_images(config, data, results, dark_data)
 
-    # Fill in other results items that will be needed
-    results.image_number = i
-    results.file_name = f
-    results.laser_wavelength = wavelength
-    results.filter = filt
-    results.exp_time = exp_time
-    results.dot_loc = new_dot_loc
-
-    #return i, f, wavelength, filt, exp_time, charge, spectrum, n_spectra, is_saturated, flux, raw_flux, uncert, new_dot_loc
     return results
 
 def get_dark(filename, master_bias=None):

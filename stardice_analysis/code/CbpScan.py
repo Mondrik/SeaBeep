@@ -84,7 +84,7 @@ class CbpScan():
         self.n_spectra = np.zeros(self.n_images).astype(np.int)
         self.spec_saturated = np.zeros(self.n_images).astype(np.bool)
 
-        self.wavelength_interp_spline = lambda x: None
+        self.wavelength_interp_spline = None
         
 
 
@@ -171,19 +171,28 @@ class CbpScan():
             # We have to find the correct position in the output array
             i = np.int((f-1)/2)
             for k in exp_keys:
+                if not self.config.process_spectra and k in ['spectrum', 'n_spectra', 'spec_saturated']:
+                    continue
                 self.__dict__[k][i] = result.__dict__[k]
             for k in dot_keys:
                 for n,d in enumerate(self.dots):
                     d.__dict__[k][i] = result.__dict__[k][n]
-        self._sort_results('laser_wavelength', exp_keys, dot_keys)
+
+        if self.config.results_sorting_key is not None:
+            self._sort_results(self.config.results_sorting_key, exp_keys, dot_keys)
 
         # Post-processing:
         # Find wavelength values from calibrated spectrograph:
-        for i,spec in enumerate(self.spectrum):
-            self.measured_wavelength[i],_ = cbph.get_output_wavelength(self.config, spec)
+        # If we didn't process the spectra, we can't estimate wavelengths from them
+        # so we won't have measured wavelengths --> no interpolating spline either.
+        if self.config.process_spectra:
+            for i,spec in enumerate(self.spectrum):
+                self.measured_wavelength[i],_ = cbph.get_output_wavelength(self.config, spec)
+            
+            self._fit_wavelength_interp_spline()
 
         # Generate interpolating spline to infer wavelength where spectrum is saturated
-        self._fit_wavelength_interp_spline()
+        # If process_spectra is False, cbp_transmission is evaluated at laser wavelengths
         self._get_cbp_transmission()
         self._calculate_dot_throughputs()
         self._calculate_uncertainty()
@@ -207,7 +216,7 @@ class CbpScan():
         """
         Sometimes the scan does not proceed in order of increasing wavelength
         Nevertheless, it is convienient to work with an output that is sorted
-        by (laser) wavelength
+        by (laser) wavelength (default value; can be changed)
         Have to make sure we use the same sorting vector (s) on both the dots and
         the per-exposure results, lest we accidentally switch data (since laser_wavelength
         is not a unique quantity between exposures)
@@ -224,7 +233,12 @@ class CbpScan():
         """
         Gets the cbp transmission at each wavelength 
         """
-        self.cbp_transmission, self.cbp_uncert = cc.get_cbp_transmission(self.wavelength_splinefit)
+        if self.config.process_spectra:
+            wl_grid = self.wavelength_splinefit
+        else:
+            wl_grid = self.laser_wavelength
+            logging.warn('process_spectra==False. Evaluating CBP transmission at laser_wavelength')
+        self.cbp_transmission, self.cbp_uncert = cc.get_cbp_transmission(wl_grid)
 
     def _calculate_dot_throughputs(self):
         for dot in self.dots:

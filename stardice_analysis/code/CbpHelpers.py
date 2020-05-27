@@ -1,8 +1,5 @@
-# -*- coding: utf-8 -*-
 """
-Created on Tue Oct  3 23:06:38 2017
-
-@author: Nick
+Collection of functions (and a class) generally needed to reduce CBP data.
 """
 
 import numpy as np
@@ -18,6 +15,7 @@ from astropy.modeling.models import Gaussian1D, Polynomial1D
 import logging
 
 
+# Should probably think about removing some of these options or adding them as config parameters
 def find_center(data, guess, search_radius=20, kernel=None, sigma_x=10, sigma_y=10, enforce_colinear=False):
     """
     Given a set of initial guesses for the locations of spots, convolve the image with a kernel and search the result for a peak within a specified radius
@@ -88,7 +86,7 @@ class MasterBias():
             else:
                 raise KeyError('REG_POWR missing in image header')
 
-def doAperturePhotometry(locs, data, config):
+def do_aperture_photometry(config, data, locs):
     aplocs = []
     for i, pair in enumerate(locs):
         aplocs.append(pair[::-1])
@@ -101,6 +99,13 @@ def doAperturePhotometry(locs, data, config):
     sky_per_pix = np.zeros(len(sky_masks))
     for i,mask in enumerate(sky_masks):
         sky_data = mask.multiply(data)
+        if sky_data is None:
+            sky_per_pix[i] = np.nan
+            if config.cbp_moves:
+                logging.warn('sky_data is None, which probably means one of the spots has wandered off of the detector.  If this is expected, you\'re probably okay to continue.')
+            else:
+                logging.error('sky_data is None. The CBP is not allowed to move, so this should never happen.  Is one of the default spot locations off of the detector?')
+            continue
         sky_data_1d = sky_data[mask.data > 0]
         _, median_sigclip, _ = sigma_clipped_stats(sky_data_1d)
         sky_per_pix[i] = median_sigclip
@@ -130,75 +135,6 @@ def get_throughput_uncert(aper_uncert,charge_uncert,flux,charge,cbpt,cbpt_uncert
     uncert = np.sqrt( flux_uncert**2. + pd_uncert**2. + cbpt_uncert**2. )
     return uncert, flux_uncert, pd_uncert, cbpt_uncert
 
-
-def makeDiagnosticPlots(data, locs, params, fitsfilename, wavelength, dark_data=None, savepath='./'):
-    #  Plot an image of the entire data frame, with circles drawn on aperture and sky aperture locations
-    plt.ioff()
-    plt.figure(figsize=(12, 12))
-    plt.imshow(data, origin='lower', vmin=-100, vmax=100)
-    wedges = []
-
-    for j, loc in enumerate(locs):
-        wedge = patch.Wedge(center=loc[::-1],theta1=0, theta2=360.,
-                            r=params['sky_rad_out'], width=params['sky_rad_out']-params['sky_rad_in'],
-                            color='r', alpha=0.5)
-        wedges.append(wedge)
-        plt.text(loc[1]+params['sky_rad_out']+10, loc[0]-params['sky_rad_out']-10, '%d' % j,
-                 color='w', size=16)
-    for wedge in wedges:
-        plt.gca().add_patch(wedge)
-
-    circs = []
-    for loc in locs:
-        circ = patch.Circle(xy=loc[::-1],
-                            radius=params['ap_phot_rad'], color='k', alpha=0.5)
-        circs.append(circ)
-    for circ in circs:
-        plt.gca().add_patch(circ)
-
-    cbar = plt.colorbar(orientation='horizontal')
-    cbar.set_label('Counts', size=14)
-    plt.xlabel('X [pix]', size=14)
-    plt.ylabel('Y [pix]', size=14)
-    #plt.title(os.path.split(fitsfilename[:-5])[-1])
-    plt.text(625, 50, '%snm' % wavelength, color='w', size=16)
-    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename), 'diagnostics')):
-        os.makedirs(os.path.join(os.path.dirname(fitsfilename), 'diagnostics'))
-    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'images')):
-        os.makedirs(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'images'))
-    savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'images'),
-                            os.path.split(fitsfilename[:-5])[-1]+'.png')
-    plt.tight_layout()
-    plt.savefig(savepath)
-    plt.clf()
-    plt.close()
-
-    #  Plot a histogram of the entire data frame
-    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'histograms')):
-        os.makedirs(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'histograms'))
-    savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'histograms'),
-                            os.path.split(fitsfilename[:-5])[-1]+'.png')
-    plt.title('%snm' % wavelength)
-    plt.hist(data.flatten(), bins=100, range=[-200, 1000], histtype='step', color='k')
-    plt.axvline(np.median(data), ls='--', color='r')
-    plt.savefig(savepath)
-    plt.clf()
-    plt.close()
-
-    #  Plot an image of the dark frame
-    if dark_data is not None:
-        if not os.path.exists(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'darks')):
-            os.makedirs(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'darks'))
-        savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename), 'diagnostics', 'darks'),
-                                os.path.split(fitsfilename[:-5])[-1]+'.png')
-
-
-        plt.title('%snm' % wavelength)
-        vmin, vmax = np.percentile(dark_data, [10,90])
-        plt.imshow(dark_data, origin='lower', vmin=vmin, vmax=vmax)
-        plt.savefig(savepath)
-        plt.clf()
-        plt.close()
 
 def reduce_spectra(specs):
     """
@@ -245,26 +181,6 @@ def get_output_wavelength(config, spectrum):
     bf_model = fitter(model, pix, spectrum[:,1])
     model_center_pix = bf_model.mean_0
     return pix2wave(model_center_pix), bf_model
-
-    
-
-def makeSpectrumPlot(nominalWave, wavelengths, counts, fitsfilename):
-    plt.ioff()
-    plt.figure(figsize=(12,12))
-    plt.plot(wavelengths,counts,'-k,')
-    plt.axvline(nominalWave,ls='--',color='r')
-    plt.title('Nominal Wavelength: {}'.format(nominalWave))
-    plt.xlabel('Wavelength [nm]',size=12)
-    plt.ylabel('Counts',size=12)
-    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'diagnostics')):
-        os.makedirs(os.path.join(os.path.dirname(fitsfilename),'diagnostics'))
-    if not os.path.exists(os.path.join(os.path.dirname(fitsfilename),'diagnostics','spectrum')):
-        os.makedirs(os.path.join(os.path.dirname(fitsfilename),'diagnostics','spectrum'))
-    savepath = os.path.join(os.path.join(os.path.dirname(fitsfilename),'diagnostics','spectrum'),
-                            os.path.split(fitsfilename[:-5])[-1]+'.png')
-    plt.savefig(savepath)
-    plt.clf()
-    plt.close()
 
 def estimate_charge_bkg(time, charge, exptime, nprepost=10):
     fit = np.polyfit(time[:nprepost], charge[:nprepost], deg=1)
